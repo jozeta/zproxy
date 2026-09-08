@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example-toggle-feature-flag",
+    "name": "Flip featureXEnabled to true in response bodies (content, needs Intercept attached)",
+    "enabled": true,
+    "engine": "content",
+    "scope": "response",
+    "location": "body",
+    "headerName": "",
+    "matchType": "contains",
+    "match": "\"featureXEnabled\":false",
+    "replace": "\"featureXEnabled\":true"
+  }
+]

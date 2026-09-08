@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example-downgrade-referrer",
+    "name": "Downgrade Referer to http:// (content, needs Intercept attached)",
+    "enabled": true,
+    "engine": "content",
+    "scope": "request",
+    "location": "header",
+    "headerName": "Referer",
+    "matchType": "regex",
+    "match": "^https://",
+    "replace": "http://"
+  }
+]

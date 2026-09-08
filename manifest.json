@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "ZProxy",
+  "short_name": "ZProxy",
+  "description": "Inspect. Intercept. Modify. A lightweight, browser-native HTTP interception tool for authorized security testing.",
+  "version": "0.1.0",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/ui/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_title": "ZProxy — Inspect. Intercept. Modify."
+  },
+  "side_panel": {
+    "default_path": "src/ui/sidepanel/sidepanel.html"
+  },
+  "permissions": [
+    "storage",
+    "webRequest",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "declarativeNetRequestFeedback",
+    "cookies",
+    "tabs",
+    "sidePanel",
+    "downloads",
+    "alarms",
+    "debugger"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'none';"
+  },
+  "minimum_chrome_version": "121"
+}

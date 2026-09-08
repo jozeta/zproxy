@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Environment / local secrets
+.env
+.env.*
+!.env.example
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor cruft
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# Packaged extension artifacts (chrome://extensions > Pack extension)
+*.crx
+*.pem
+*.zip

@@ -1,0 +1,14 @@
+{
+  "name": "zproxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inspect. Intercept. Modify. A lightweight, browser-native Chrome MV3 extension for authorized HTTP interception and testing.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "license": "MIT"
+}

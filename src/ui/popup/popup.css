@@ -1,0 +1,174 @@
+:root {
+  /* Greyscale theme — true neutral (R=G=B) grays throughout, mirrors
+     sidepanel.css. */
+  --bg: #0c0c0c;
+  --bg-alt: #131313;
+  --bg-raised: #1a1a1a;
+  --bg-hover: #232323;
+  --border: #282828;
+  --border-strong: #3a3a3a;
+  --text: #ececec;
+  --text-dim: #8c8c8c;
+  --text-faint: #5c5c5c;
+  --accent: #d6d6d6;
+  --accent-strong: #bcbcbc;
+  --accent-soft: rgba(214, 214, 214, 0.12);
+  --accent-contrast: #0c0c0c;
+  /* Deliberate exception, mirrors sidepanel.css: a real red for "Intercept
+     is actively attached to this tab." */
+  --intercept-on: #e5484d;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.38);
+  --font-ui: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  width: 260px;
+  -webkit-font-smoothing: antialiased;
+}
+.zp-popup { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+.zp-popup-header { display: flex; align-items: center; justify-content: space-between; }
+.zp-popup-logo { font-weight: 800; color: var(--text); letter-spacing: 0.01em; font-size: 14px; }
+.zp-popup-logo::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--accent);
+  margin-right: 7px;
+  box-shadow: 0 0 8px rgba(214, 214, 214, 0.6);
+  vertical-align: middle;
+}
+.zp-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+}
+.zp-scope-badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.zp-scope-badge.on { color: var(--accent); border-color: rgba(214, 214, 214, 0.35); background: var(--accent-soft); }
+.zp-scope-badge.on::before { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+.zp-row { display: flex; align-items: center; gap: 6px; }
+
+.zp-intercept-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.zp-intercept-toggle:hover { border-color: var(--text-faint); background: var(--bg-hover); }
+.zp-intercept-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.zp-intercept-toggle.on .dot { background: var(--intercept-on); box-shadow: 0 0 7px var(--intercept-on); }
+/* Text/background untouched here — only the frame and dot change when
+   attached, mirroring sidepanel.css. */
+.zp-intercept-toggle.on { border-color: var(--intercept-on); }
+
+.zp-popup-tab-info {
+  font-size: 11px;
+  color: var(--text-faint);
+  word-break: break-all;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  line-height: 1.5;
+}
+
+.zp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+.zp-btn:hover { border-color: var(--text-faint); background: var(--bg-hover); }
+.zp-btn:active { transform: translateY(1px); }
+.zp-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 700; }
+.zp-btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.zp-btn-block { flex: 1; width: 100%; }
+
+/* ---------- Info icon + tooltip (mirrors sidepanel.css) ---------- */
+.zp-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1;
+  padding: 0;
+  cursor: help;
+  flex: none;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.zp-info-icon:hover, .zp-info-icon:focus-visible {
+  color: var(--accent);
+  border-color: rgba(214, 214, 214, 0.5);
+  background: var(--accent-soft);
+  outline: none;
+}
+.zp-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 220px;
+  background: #171717;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-weight: 400;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+}
+.zp-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--zp-tooltip-arrow-left, 50%);
+  width: 8px;
+  height: 8px;
+  background: #171717;
+  border: 1px solid var(--border-strong);
+  transform: translateX(-50%) rotate(45deg);
+}
+.zp-tooltip[data-placement="top"]::after { bottom: -5px; border-top: none; border-left: none; }
+.zp-tooltip[data-placement="bottom"]::after { top: -5px; border-bottom: none; border-right: none; }

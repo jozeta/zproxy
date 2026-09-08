@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ZProxy</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="zp-popup">
+      <div class="zp-popup-header">
+        <span class="zp-popup-logo">ZProxy</span>
+        <span id="scope-badge" class="zp-scope-badge">Scope: off</span>
+      </div>
+      <div class="zp-row" id="intercept-row">
+        <button id="intercept-toggle" class="zp-intercept-toggle">
+          <span class="dot"></span>
+          <span id="intercept-toggle-label">Intercept: OFF</span>
+        </button>
+      </div>
+      <div id="tab-info" class="zp-popup-tab-info"></div>
+      <div class="zp-row" id="open-panel-row">
+        <button id="open-panel" class="zp-btn zp-btn-primary zp-btn-block">Open ZProxy panel</button>
+      </div>
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

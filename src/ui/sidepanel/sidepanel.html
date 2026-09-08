@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ZProxy</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="zp-header">
+        <div class="zp-brand">
+          <span class="zp-logo">ZProxy</span>
+          <span class="zp-tagline">Inspect. Intercept. Modify.</span>
+        </div>
+        <div class="zp-header-controls" id="header-controls">
+          <span id="scope-badge" class="zp-scope-badge">Scope: off</span>
+          <button id="intercept-toggle" class="zp-intercept-toggle">
+            <span class="dot"></span>
+            <span id="intercept-toggle-label">Intercept: OFF</span>
+          </button>
+        </div>
+      </header>
+      <div class="zp-body">
+        <nav class="zp-nav" id="nav"></nav>
+        <main class="zp-main" id="main"></main>
+      </div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "example-mark-lab-traffic",
+    "name": "Tag all in-scope requests (static, no debugger needed)",
+    "enabled": true,
+    "engine": "static",
+    "scope": "request",
+    "location": "header",
+    "headerName": "X-ZProxy-Lab",
+    "urlFilter": "",
+    "staticAction": "set",
+    "staticValue": "1"
+  }
+]
