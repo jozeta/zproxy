@@ -59,12 +59,12 @@ const NETWORK_COMPLETION_MAX_MS = 30_000; // how long a just-forwarded request m
 // request. Same transaction, two different string representations
 // ("…/xss_r/?name=h" vs. "…/xss_r/?name=h#"). Stripped before ever using a
 // URL as a correlation key so this class of mismatch can't recur.
-function stripFragment(url) {
+export function stripFragment(url) {
   const i = url.indexOf("#");
   return i === -1 ? url : url.slice(0, i);
 }
 
-function key(method, url) {
+export function key(method, url) {
   return `${method} ${stripFragment(url)}`;
 }
 

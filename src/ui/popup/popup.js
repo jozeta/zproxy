@@ -1,5 +1,10 @@
 import { call } from "../components/api.js";
 import { infoIcon } from "../components/tooltip.js";
+import { icon } from "../components/icons.js";
+import { applyTheme } from "../components/theme.js";
+
+document.getElementById("popup-mark").appendChild(icon("logo", { size: 16 }));
+call("settings:get").then((s) => applyTheme(s.theme)).catch(() => {});
 
 const scopeBadge = document.getElementById("scope-badge");
 const interceptToggle = document.getElementById("intercept-toggle");
@@ -32,7 +37,7 @@ async function refreshScopeBadge() {
   try {
     const scope = await call("scope:get");
     const count = scope.enabled ? (scope.include || []).length : 0;
-    scopeBadge.textContent = scope.enabled ? `Scope: ${count} pattern${count === 1 ? "" : "s"}` : "Scope: off";
+    scopeBadge.textContent = scope.enabled ? `Scope: ${count}` : "Scope off";
     scopeBadge.classList.toggle("on", scope.enabled && count > 0);
   } catch {
     /* background not ready yet */
@@ -54,9 +59,9 @@ async function refreshInterceptState() {
   try {
     const { attached } = await call("intercept:status", { tabId: currentTab.id });
     interceptToggle.classList.toggle("on", attached);
-    interceptLabel.textContent = attached ? "Intercept: ON" : "Intercept: OFF";
+    interceptLabel.textContent = attached ? "Intercepting" : "Intercept off";
   } catch {
-    interceptLabel.textContent = "Intercept: OFF";
+    interceptLabel.textContent = "Intercept off";
   }
 }
 

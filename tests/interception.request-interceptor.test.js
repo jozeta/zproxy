@@ -56,3 +56,32 @@ test("requestActuallyChanged detects a header value change but ignores header or
   assert.equal(requestActuallyChanged(a, reordered), false);
   assert.equal(requestActuallyChanged(a, changed), true);
 });
+
+test("buildContinueParams sends no overrides at all for an unchanged request", async () => {
+  const { buildContinueParams } = await import("../src/interception/request-interceptor.js");
+  const original = req();
+  assert.deepEqual(buildContinueParams("f1", req(), original), { requestId: "f1" });
+});
+
+test("buildContinueParams never re-encodes an unchanged body (lossy for binary uploads)", async () => {
+  const { buildContinueParams } = await import("../src/interception/request-interceptor.js");
+  const original = req({ method: "POST", body: "binary�ish" });
+  const params = buildContinueParams("f1", { ...original, url: "https://example.com/other" }, original);
+  assert.equal(params.url, "https://example.com/other");
+  assert.equal("postData" in params, false);
+  assert.equal("headers" in params, false);
+});
+
+test("buildContinueParams sends the body and framing-corrected headers when the body changed", async () => {
+  const { buildContinueParams } = await import("../src/interception/request-interceptor.js");
+  const original = req({ method: "POST", body: "a=1", headers: [{ name: "Content-Length", value: "3" }] });
+  const params = buildContinueParams("f1", { ...original, body: "a=12345" }, original);
+  assert.equal(Buffer.from(params.postData, "base64").toString(), "a=12345");
+  assert.equal(params.headers.some((h) => h.name.toLowerCase() === "content-length"), false);
+});
+
+test("buildContinueParams sends everything when the original is unknown", async () => {
+  const { buildContinueParams } = await import("../src/interception/request-interceptor.js");
+  const params = buildContinueParams("f1", req({ body: "x" }), undefined);
+  assert.ok(params.url && params.method && params.headers && params.postData);
+});

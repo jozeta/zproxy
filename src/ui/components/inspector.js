@@ -179,7 +179,7 @@ function renderFindingsInto(container, findings) {
   for (const f of findings) {
     const card = el("div", "zp-finding");
     const title = el("div", "zp-finding-title");
-    title.appendChild(el("span", `zp-badge ${SEVERITY_BADGE_CLASS[f.severity] || ""}`.trim(), f.severity.toUpperCase()));
+    title.appendChild(el("span", `zp-badge ${SEVERITY_BADGE_CLASS[f.severity] || ""}`.trim(), f.severity.charAt(0).toUpperCase() + f.severity.slice(1)));
     title.appendChild(document.createTextNode(f.title));
     card.appendChild(title);
     card.appendChild(el("div", "zp-finding-detail", f.detail));

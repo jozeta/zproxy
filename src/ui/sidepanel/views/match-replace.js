@@ -7,6 +7,9 @@
 //    the real header/body bytes. Only runs while Intercept is attached.
 import { downloadText } from "../../components/export.js";
 import { infoIcon } from "../../components/tooltip.js";
+import { coalesced } from "../../components/history-feed.js";
+import { testRule } from "../../../interception/match-replace.js";
+import { MATCH_REPLACE_PRESETS } from "../../../interception/match-replace-presets.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -98,15 +101,47 @@ export function renderMatchReplace(container, ctx) {
   toolbar.appendChild(fileInput);
   container.appendChild(toolbar);
 
+  const toolbar2 = el("div", "zp-toolbar");
+  const presetSelect = document.createElement("select");
+  const presetPlaceholder = el("option", "", "Add a preset…");
+  presetPlaceholder.value = "";
+  presetSelect.appendChild(presetPlaceholder);
+  for (const preset of MATCH_REPLACE_PRESETS) {
+    const o = el("option", "", preset.label);
+    o.value = preset.id;
+    presetSelect.appendChild(o);
+  }
+  const enableAllBtn = el("button", "zp-btn zp-btn-small", "Enable all");
+  enableAllBtn.type = "button";
+  const disableAllBtn = el("button", "zp-btn zp-btn-small", "Disable all");
+  disableAllBtn.type = "button";
+  const filterInput = document.createElement("input");
+  filterInput.type = "search";
+  filterInput.className = "zp-search-input";
+  filterInput.placeholder = "Filter rules by name, header, or pattern…";
+  toolbar2.appendChild(presetSelect);
+  toolbar2.appendChild(infoIcon("Common rewrites, ready to use — IP spoofing, CORS Origin, stripping CSP/X-Frame-Options, revealing hidden fields, flipping an isAdmin flag, … Presets are added switched OFF: review, then tick the checkbox to enable.", { label: "About presets" }));
+  toolbar2.appendChild(enableAllBtn);
+  toolbar2.appendChild(disableAllBtn);
+  toolbar2.appendChild(filterInput);
+  container.appendChild(toolbar2);
+
   const list = el("div");
   container.appendChild(list);
 
+  // The tester's sample text (rule._sample) is view-only and may hold real
+  // tokens pasted from traffic — it is never saved or exported.
+  const withoutTransient = (list) => list.map(({ _sample, ...rule }) => rule);
+
   async function persist() {
-    await ctx.api("rules:save", { rules });
+    await ctx.api("rules:save", { rules: withoutTransient(rules) });
   }
+  // Text fields save as you type — debounced, since every save also rebuilds
+  // the declarativeNetRequest rule set in the service worker.
+  const persistSoon = coalesced(() => persist().catch(() => {}), 400);
 
   function ruleCard(rule) {
-    const card = el("div", "zp-rule-card");
+    const card = el("div", rule.enabled ? "zp-rule-card" : "zp-rule-card disabled");
 
     const headRow = el("div", "zp-form-row");
     const enabledCheck = document.createElement("input");
@@ -114,6 +149,7 @@ export function renderMatchReplace(container, ctx) {
     enabledCheck.checked = rule.enabled;
     enabledCheck.addEventListener("change", async () => {
       rule.enabled = enabledCheck.checked;
+      card.classList.toggle("disabled", !rule.enabled);
       await persist();
     });
     headRow.appendChild(enabledCheck);
@@ -125,9 +161,22 @@ export function renderMatchReplace(container, ctx) {
     nameInput.style.flex = "1";
     nameInput.addEventListener("input", async () => {
       rule.name = nameInput.value;
-      await persist();
+      persistSoon();
     });
     headRow.appendChild(nameInput);
+
+    const index = rules.indexOf(rule);
+    for (const [label, title, action] of [
+      ["↑", "Move up — rules apply top to bottom", () => move(index, -1)],
+      ["↓", "Move down", () => move(index, 1)],
+      ["Duplicate", "Copy this rule (added switched off, right below)", () => duplicate(rule)],
+    ]) {
+      const b = el("button", "zp-btn zp-btn-small", label);
+      b.type = "button";
+      b.title = title;
+      b.addEventListener("click", action);
+      headRow.appendChild(b);
+    }
 
     const delBtn = el("button", "zp-btn zp-btn-small zp-btn-danger", "Delete");
     delBtn.type = "button";
@@ -145,7 +194,7 @@ export function renderMatchReplace(container, ctx) {
       ["static", "content"],
       async (v) => {
         rule.engine = v;
-        await persist();
+        persistSoon();
         renderList();
       },
       "\"static\" (declarativeNetRequest) runs always, no debugger needed, but can only unconditionally set/remove a header or redirect a URL. \"content\" does real find-and-replace on header/body text, but only while Intercept is attached."
@@ -158,7 +207,7 @@ export function renderMatchReplace(container, ctx) {
       ["request", "response"],
       async (v) => {
         rule.scope = v;
-        await persist();
+        persistSoon();
       },
       "Whether this rule acts on the outgoing request or the incoming response."
     );
@@ -172,7 +221,7 @@ export function renderMatchReplace(container, ctx) {
       locationOptions,
       async (v) => {
         rule.location = v;
-        await persist();
+        persistSoon();
         renderList();
       },
       "What part of the request/response this rule touches — a single header, the URL, or (content engine only) the body."
@@ -186,7 +235,7 @@ export function renderMatchReplace(container, ctx) {
         "e.g. Authorization",
         async (v) => {
           rule.headerName = v;
-          await persist();
+          persistSoon();
         },
         "Case-insensitive header name this rule reads/writes."
       );
@@ -200,7 +249,7 @@ export function renderMatchReplace(container, ctx) {
         "substring or /regex/, blank = all URLs",
         async (v) => {
           rule.urlFilter = v;
-          await persist();
+          persistSoon();
         },
         "Restricts this rule to matching URLs. Wrap in slashes for a regex (/pattern/), otherwise it's treated as a plain substring. Leave blank to match every URL."
       );
@@ -213,7 +262,7 @@ export function renderMatchReplace(container, ctx) {
           ["set", "remove"],
           async (v) => {
             rule.staticAction = v;
-            await persist();
+            persistSoon();
             renderList();
           },
           "\"set\" always overwrites the header to a fixed value; \"remove\" strips it entirely. Neither can look at the header's current value — that needs the content engine instead."
@@ -226,7 +275,7 @@ export function renderMatchReplace(container, ctx) {
             "",
             async (v) => {
               rule.staticValue = v;
-              await persist();
+              persistSoon();
             },
             "The fixed value this header is unconditionally set to."
           );
@@ -239,7 +288,7 @@ export function renderMatchReplace(container, ctx) {
           "https://...",
           async (v) => {
             rule.staticValue = v;
-            await persist();
+            persistSoon();
           },
           "The destination URL every matching request is redirected to."
         );
@@ -253,7 +302,7 @@ export function renderMatchReplace(container, ctx) {
         ["contains", "regex"],
         async (v) => {
           rule.matchType = v;
-          await persist();
+          persistSoon();
         },
         "\"contains\" does a plain substring match; \"regex\" treats Match as a regular expression (no surrounding slashes)."
       );
@@ -264,7 +313,7 @@ export function renderMatchReplace(container, ctx) {
         rule.matchType === "regex" ? "pattern (no slashes)" : "substring",
         async (v) => {
           rule.match = v;
-          await persist();
+          persistSoon();
         },
         "Text (or regex pattern) to find in the header/body/URL bytes while Intercept is attached."
       );
@@ -275,23 +324,104 @@ export function renderMatchReplace(container, ctx) {
         "",
         async (v) => {
           rule.replace = v;
-          await persist();
+          persistSoon();
         },
         "Text every match is replaced with. Leave blank to delete the matched text."
       );
       card.appendChild(replace.element);
     }
 
+    if (rule.engine === "content") card.appendChild(ruleTester(rule, card));
     return card;
+  }
+
+  /** Live preview of a content rule on sample text — the same engine code live traffic goes through. */
+  function ruleTester(rule, card) {
+    const box = document.createElement("details");
+    box.className = "zp-rule-tester";
+    const summary = el("summary", "zp-mono-small", "Test this rule");
+    box.appendChild(summary);
+    const sample = document.createElement("textarea");
+    sample.style.minHeight = "60px";
+    sample.placeholder = "Paste sample text (a header value, URL, or body) to see what this rule does to it…";
+    sample.value = rule._sample || "";
+    const status = el("div", "zp-mono-small", "");
+    const output = el("pre", "zp-raw-view zp-intruder-preview");
+    box.append(sample, status, output);
+    function run() {
+      rule._sample = sample.value;
+      if (!sample.value) {
+        status.textContent = "";
+        output.textContent = "";
+        return;
+      }
+      const result = testRule(rule, sample.value);
+      status.textContent = result.error ? `⚠ Invalid regex: ${result.error} — this rule currently does nothing.` : `${result.matches} match${result.matches === 1 ? "" : "es"}`;
+      status.style.color = result.error ? "var(--danger)" : "";
+      output.textContent = result.output;
+    }
+    sample.addEventListener("input", run);
+    // Re-run when any of the rule's own fields change.
+    card.addEventListener("input", (e) => e.target !== sample && run());
+    card.addEventListener("change", (e) => e.target !== sample && run());
+    run();
+    return box;
+  }
+
+  function move(index, delta) {
+    const target = index + delta;
+    if (target < 0 || target >= rules.length) return;
+    [rules[index], rules[target]] = [rules[target], rules[index]];
+    persist();
+    renderList();
+  }
+
+  function duplicate(rule) {
+    const { _sample, ...rest } = rule;
+    const copy = { ...structuredClone(rest), id: uid(), name: `${rule.name} (copy)`, enabled: false };
+    rules.splice(rules.indexOf(rule) + 1, 0, copy);
+    persist();
+    renderList();
+  }
+
+  function matchesFilter(rule, q) {
+    if (!q) return true;
+    const needle = q.toLowerCase();
+    return [rule.name, rule.headerName, rule.match, rule.replace, rule.staticValue, rule.urlFilter].some((v) => (v || "").toLowerCase().includes(needle));
   }
 
   function renderList() {
     list.textContent = "";
     if (rules.length === 0) {
-      list.appendChild(el("div", "zp-empty", "No rules yet. Add one, or Import an example set from examples/match-replace-rules/."));
+      list.appendChild(el("div", "zp-empty", "No rules yet. Add one, pick a preset above, or Import an example set from examples/match-replace-rules/."));
       return;
     }
-    for (const rule of rules) list.appendChild(ruleCard(rule));
+    const visible = rules.filter((r) => matchesFilter(r, filterInput.value));
+    if (visible.length === 0) list.appendChild(el("div", "zp-empty", "No rules match the filter."));
+    for (const rule of visible) list.appendChild(ruleCard(rule));
+  }
+
+  filterInput.addEventListener("input", renderList);
+
+  presetSelect.addEventListener("change", async () => {
+    const preset = MATCH_REPLACE_PRESETS.find((p) => p.id === presetSelect.value);
+    presetSelect.value = "";
+    if (!preset) return;
+    rules.push({ ...defaultRule(), ...structuredClone(preset.rule), enabled: false });
+    await persist();
+    renderList();
+    list.lastElementChild?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+
+  for (const [btn, enabled] of [
+    [enableAllBtn, true],
+    [disableAllBtn, false],
+  ]) {
+    btn.addEventListener("click", async () => {
+      for (const r of rules) r.enabled = enabled;
+      await persist();
+      renderList();
+    });
   }
 
   addBtn.addEventListener("click", async () => {
@@ -301,7 +431,7 @@ export function renderMatchReplace(container, ctx) {
   });
 
   exportBtn.addEventListener("click", async () => {
-    await downloadText(`zproxy-rules-${Date.now()}.json`, JSON.stringify(rules, null, 2), "application/json");
+    await downloadText(`zproxy-rules-${Date.now()}.json`, JSON.stringify(withoutTransient(rules), null, 2), "application/json");
   });
 
   importBtn.addEventListener("click", () => fileInput.click());

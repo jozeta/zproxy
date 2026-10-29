@@ -7,10 +7,11 @@ import * as RequestInterceptor from "../interception/request-interceptor.js";
 import * as ResponseInterceptor from "../interception/response-interceptor.js";
 import * as WebSocketInterceptor from "../interception/websocket-interceptor.js";
 import * as Permissions from "./permissions.js";
-import { getSettings, updateSettings } from "../storage/settings.js";
+import { getSettings, updateSettings, resetSettings } from "../storage/settings.js";
 import { getRules, saveRules, getScope, saveScope, getInterceptRules, saveInterceptRules } from "../storage/rules.js";
-import { getHistory, clearHistory, loadHistory, updateHistoryEntry } from "../storage/history.js";
+import { getHistory, clearHistory, loadHistory, updateHistoryEntry, applyHistoryPersistence } from "../storage/history.js";
 import { addHostToScope } from "./scope.js";
+import { onBodyPatched } from "./body-tracker.js";
 
 registerTrafficListeners();
 loadHistory();
@@ -27,6 +28,7 @@ function broadcast(event) {
 }
 
 onTrafficEntry((entry) => broadcast({ type: "history:new-entry", entry }));
+onBodyPatched((entry) => broadcast({ type: "history:entry-updated", entry }));
 Interception.onInterceptionEvent((event) => broadcast({ type: "intercept:event", event }));
 
 const handlers = {
@@ -36,11 +38,30 @@ const handlers = {
     if ("interceptStage" in patch || "excludedResourceTypes" in patch) {
       await Interception.refreshFetchPatternsForAttachedTabs();
     }
+    if ("persistHistoryToDisk" in patch) await applyHistoryPersistence(next);
+    return next;
+  },
+  // Same side effects as settings:update, for whichever settings the reset actually changed.
+  "settings:reset": async () => {
+    const { previous, next } = await resetSettings();
+    if (
+      previous.interceptStage !== next.interceptStage ||
+      JSON.stringify(previous.excludedResourceTypes) !== JSON.stringify(next.excludedResourceTypes)
+    ) {
+      await Interception.refreshFetchPatternsForAttachedTabs();
+    }
+    if (previous.persistHistoryToDisk !== next.persistHistoryToDisk) await applyHistoryPersistence(next);
     return next;
   },
 
   "scope:get": () => getScope(),
-  "scope:save": ({ scope }) => saveScope(scope),
+  // Static (DNR) rules are gated on Scope — see dnr-rules.js — so they must
+  // be recompiled whenever it changes.
+  "scope:save": async ({ scope }) => {
+    await saveScope(scope);
+    await syncDnrRules();
+    return scope;
+  },
 
   "rules:get": () => getRules(),
   "rules:save": async ({ rules }) => {
@@ -91,6 +112,7 @@ const handlers = {
     if (host) {
       const current = await getScope();
       await saveScope(addHostToScope(current, host));
+      await syncDnrRules();
     }
     return Interception.attachTab(tabId);
   },
@@ -100,7 +122,7 @@ const handlers = {
     responses: ResponseInterceptor.getPendingItems(tabId),
   }),
   "intercept:forward": ({ tabId, kind, fetchRequestId }) =>
-    (kind === "response" ? ResponseInterceptor.forwardUnmodified : RequestInterceptor.forward)(tabId, fetchRequestId).then(
+    (kind === "response" ? ResponseInterceptor.forward : RequestInterceptor.forward)(tabId, fetchRequestId).then(
       () => ({ ok: true })
     ),
   "intercept:forwardEdited": ({ tabId, kind, fetchRequestId, edited }) =>

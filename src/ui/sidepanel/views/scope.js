@@ -42,7 +42,7 @@ function patternList(title, hint, patterns, onChange) {
   const addRow = el("div", "zp-form-row");
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "example.com or *.example.com";
+  input.placeholder = "example.com, *.example.com, https://example.com:8443/api/";
   const addBtn = el("button", "zp-btn zp-btn-small", "+ Add");
   addBtn.type = "button";
   addBtn.addEventListener("click", () => {
@@ -59,7 +59,10 @@ function patternList(title, hint, patterns, onChange) {
   addRow.appendChild(input);
   addRow.appendChild(addBtn);
   addRow.appendChild(
-    infoIcon("An exact host (example.com) matches only that host. A *.example.com wildcard also matches every subdomain. Press Enter or click + Add.", { label: "About patterns" })
+    infoIcon(
+      "Format: [scheme://]host[:port][/path]. Only the host is required. An exact host (example.com) matches only that host; *.example.com also matches every subdomain. Add a scheme (https://) or port (:8443) to require it, and/or a path to match only URLs whose path starts with it — * is a wildcard, and ending a path with / stops it at a segment (\"/api/\" matches /api/users but not /apifoo). Static Match & Replace rules can only use host-only patterns: a scheme/port/path-restricted Include gives them nothing, and such an Exclude is ignored by them. Press Enter or click + Add.",
+      { label: "About patterns" }
+    )
   );
   wrap.appendChild(addRow);
 
@@ -128,13 +131,13 @@ export function renderScope(container, ctx) {
     listsHost.appendChild(
       patternList(
         "Include",
-        "Hosts ZProxy will capture/intercept. Supports exact hosts and *.example.com wildcards.",
+        "Hosts (optionally narrowed to a scheme, port, or path) ZProxy will capture/intercept, e.g. *.example.com or example.com/api/.",
         scope.include,
         save
       )
     );
     listsHost.appendChild(
-      patternList("Exclude", "Hosts to always skip, even if they match Include (e.g. auth/SSO you don't want to touch).", scope.exclude, save)
+      patternList("Exclude", "Hosts or paths to always skip, even if they match Include (e.g. auth/SSO you don't want to touch, or example.com/logout).", scope.exclude, save)
     );
   }
 

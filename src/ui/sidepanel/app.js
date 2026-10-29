@@ -1,5 +1,8 @@
 import { call, onPush, getCurrentTab } from "../components/api.js";
 import { infoIcon, hideActiveTooltip } from "../components/tooltip.js";
+import { icon } from "../components/icons.js";
+import { applyTheme } from "../components/theme.js";
+import { visibleViews } from "../../utils/nav-visibility.js";
 import { matchesShortcut } from "../../utils/shortcuts.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderHistory } from "./views/history.js";
@@ -13,14 +16,18 @@ import { renderScope } from "./views/scope.js";
 import { renderSettings } from "./views/settings.js";
 import { renderDecoder } from "./views/decoder.js";
 import { renderComparer } from "./views/comparer.js";
+import { renderWebSockets } from "./views/websockets.js";
+import { renderAccessControl } from "./views/access-control.js";
 
 const VIEWS = [
   { id: "dashboard", label: "Dashboard", render: renderDashboard },
   { id: "history", label: "History", render: renderHistory },
   { id: "findings", label: "Findings", render: renderFindings },
   { id: "intercept", label: "Intercept", render: renderIntercept },
+  { id: "websockets", label: "WebSockets", render: renderWebSockets },
   { id: "repeater", label: "Repeater", render: renderRepeater },
   { id: "intruder", label: "Intruder", render: renderIntruder },
+  { id: "access-control", label: "Access Control", render: renderAccessControl },
   { id: "cookies", label: "Cookies", render: renderCookies },
   { id: "decoder", label: "Decoder", render: renderDecoder },
   { id: "comparer", label: "Comparer", render: renderComparer },
@@ -35,9 +42,20 @@ const interceptToggle = document.getElementById("intercept-toggle");
 const interceptLabel = document.getElementById("intercept-toggle-label");
 const scopeBadge = document.getElementById("scope-badge");
 
+// The badge opens Scope directly — the way in when Scope is hidden from the nav.
+scopeBadge.setAttribute("role", "button");
+scopeBadge.tabIndex = 0;
+scopeBadge.title = "Open Scope";
+scopeBadge.addEventListener("click", () => navigateTo("scope"));
+scopeBadge.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    navigateTo("scope");
+  }
+});
 scopeBadge.after(
   infoIcon(
-    "Which hosts ZProxy is allowed to see. Traffic for hosts outside Scope is never captured or intercepted — configure it in the Scope tab.",
+    "Which hosts ZProxy is allowed to see. Traffic for hosts outside Scope is never captured or intercepted — click this badge to configure it.",
     { label: "About Scope" }
   )
 );
@@ -64,15 +82,30 @@ let interceptPendingCount = 0;
 // for state.notify (see views/intruder.js).
 const sharedState = { repeaterQueue: [], intruderQueue: [], comparerQueue: [], shortcutHandlers: {} };
 let shortcuts = {};
+// Views left out of the nav (Settings → Hide from navigation). null until
+// settings first load, so the very first render doesn't flash the full list
+// and then shrink it.
+let hiddenViews = null;
+
+function applyNavSettings(settings) {
+  const next = settings.hiddenViews || [];
+  if (hiddenViews && next.length === hiddenViews.length && next.every((id) => hiddenViews.includes(id))) return;
+  hiddenViews = next;
+  renderNav();
+}
 
 async function refreshShortcuts() {
   try {
     const settings = await call("settings:get");
     shortcuts = settings.shortcuts || {};
+    applyTheme(settings.theme);
+    applyNavSettings(settings);
   } catch {
     /* background not ready yet */
   }
 }
+
+window.addEventListener("zproxy:settings-changed", (e) => applyNavSettings(e.detail));
 
 // Global, not per-view: toggleIntercept always works (it's the header
 // toggle); forward/sendToRepeater/search/clearHistory only do anything when
@@ -127,22 +160,51 @@ function isDebuggableUrl(url) {
   }
 }
 
+// Kept across re-renders (re-appended, not re-created) so its CSS transform
+// transition can slide it from the previous item to the new one.
+const navIndicator = document.createElement("span");
+navIndicator.className = "zp-nav-indicator";
+
 function renderNav() {
   nav.textContent = "";
+  nav.appendChild(navIndicator);
   interceptNavBtn = null;
-  for (const view of VIEWS) {
+  let activeBtn = null;
+  for (const view of visibleViews(VIEWS, hiddenViews || [], activeView)) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "zp-nav-item" + (view.id === activeView ? " active" : "");
+    // The label is visually hidden when the panel is narrow (icon rail), so
+    // the title keeps every item identifiable on hover.
+    btn.title = view.label;
+    if (view.id === activeView) btn.setAttribute("aria-current", "page");
+    btn.appendChild(icon(view.id, { size: 17 }));
     const labelSpan = document.createElement("span");
+    labelSpan.className = "zp-nav-label";
     labelSpan.textContent = view.label;
     btn.appendChild(labelSpan);
     btn.addEventListener("click", () => navigateTo(view.id));
     nav.appendChild(btn);
     if (view.id === "intercept") interceptNavBtn = btn;
+    if (view.id === activeView) activeBtn = btn;
   }
+  positionNavIndicator(activeBtn);
   updateInterceptNavBadge();
 }
+
+function positionNavIndicator(btn) {
+  if (!btn) {
+    navIndicator.style.opacity = "0";
+    return;
+  }
+  navIndicator.style.opacity = "1";
+  navIndicator.style.top = "0";
+  navIndicator.style.height = `${btn.offsetHeight - 12}px`;
+  navIndicator.style.transform = `translateY(${btn.offsetTop + 6}px)`;
+}
+
+// The rail collapses/expands with the panel width (sidepanel.css), which moves every item.
+window.addEventListener("resize", () => positionNavIndicator(nav.querySelector(".zp-nav-item.active")));
 
 function updateInterceptNavBadge() {
   if (!interceptNavBtn) return;
@@ -182,6 +244,11 @@ function navigateTo(viewId) {
   const view = VIEWS.find((v) => v.id === viewId) || VIEWS[0];
   const result = view.render(main, makeCtx());
   if (typeof result === "function") currentViewCleanup = result;
+  // Restart the enter animation (sidepanel.css .zp-view-enter) for the new view.
+  main.classList.remove("zp-view-enter");
+  void main.offsetWidth;
+  main.classList.add("zp-view-enter");
+  main.scrollTop = 0;
 }
 
 async function refreshInterceptState() {
@@ -189,10 +256,10 @@ async function refreshInterceptState() {
   try {
     const { attached } = await call("intercept:status", { tabId: currentTab.id });
     interceptToggle.classList.toggle("on", attached);
-    interceptLabel.textContent = attached ? "Intercept: ON (this tab)" : "Intercept: OFF";
+    interceptLabel.textContent = attached ? "Intercepting" : "Intercept off";
     interceptAttachedForBadge = attached;
   } catch {
-    interceptLabel.textContent = "Intercept: OFF";
+    interceptLabel.textContent = "Intercept off";
     interceptAttachedForBadge = false;
   }
   await refreshInterceptPendingCount();
@@ -202,7 +269,7 @@ async function refreshScopeBadge() {
   try {
     const scope = await call("scope:get");
     const count = scope.enabled ? (scope.include || []).length : 0;
-    scopeBadge.textContent = scope.enabled ? `Scope: ${count} pattern${count === 1 ? "" : "s"}` : "Scope: off";
+    scopeBadge.textContent = scope.enabled ? `Scope: ${count}` : "Scope off";
     scopeBadge.classList.toggle("on", scope.enabled && count > 0);
   } catch {
     /* background not ready yet */
@@ -258,6 +325,8 @@ onPush((event) => {
 });
 
 async function init() {
+  document.getElementById("brand-mark").appendChild(icon("logo", { size: 18 }));
+  document.getElementById("app-version").textContent = `v${chrome.runtime.getManifest().version}`;
   currentTab = await getCurrentTab();
   chrome.tabs.onActivated.addListener(async () => {
     currentTab = await getCurrentTab();
@@ -268,11 +337,12 @@ async function init() {
       currentTab.url = changeInfo.url;
     }
   });
-  renderNav();
+  // Settings first, so the nav's first render already respects hidden views.
+  await refreshShortcuts();
+  if (hiddenViews === null) renderNav(); // settings unavailable — show everything rather than nothing
   navigateTo(activeView);
   refreshInterceptState();
   refreshScopeBadge();
-  refreshShortcuts();
   setInterval(() => {
     refreshScopeBadge();
     refreshInterceptPendingCount();

@@ -7,8 +7,16 @@ import { isInScope } from "./scope.js";
 import { getScope } from "../storage/rules.js";
 import { toHeaderList, getHeaderValue } from "../parsers/headers.js";
 import { consumeEdited } from "./edited-tracker.js";
+import { consumeResponseBody } from "./body-tracker.js";
 
 const pending = new Map(); // requestId -> in-progress HistoryEntry
+// requestId -> Promise<boolean>. The scope check is async (getScope() reads
+// chrome.storage when its cache is cold — e.g. right after the service
+// worker wakes for the very request being captured), so the entry is
+// registered synchronously and the check is awaited only when finalizing.
+// Awaiting it up front instead let onSendHeaders arrive before the entry
+// existed, silently dropping that request's headers.
+const scopeChecks = new Map();
 
 function bodyFromRequestBody(requestBody) {
   if (!requestBody || requestBody.error) return null;
@@ -62,11 +70,9 @@ function attachTrafficListeners() {
   const filter = { urls: ["<all_urls>"] };
 
   chrome.webRequest.onBeforeRequest.addListener(
-    async (details) => {
+    (details) => {
       if (details.tabId < 0) return;
-      const scope = await getScope();
-      if (!isInScope(details.url, scope)) return;
-      pending.set(details.requestId, {
+      const entry = {
         id: details.requestId,
         tabId: details.tabId,
         type: details.type,
@@ -77,10 +83,26 @@ function attachTrafficListeners() {
           url: details.url,
           httpVersion: "HTTP/1.1",
           headers: [],
-          body: bodyFromRequestBody(details.requestBody),
+          body: null,
         },
         response: null,
-      });
+      };
+      pending.set(details.requestId, entry);
+      const check = getScope()
+        .then((scope) => {
+          if (!isInScope(details.url, scope)) return false;
+          // Decoded only once known in scope — this listener sees every request in the browser.
+          entry.request.body = bodyFromRequestBody(details.requestBody);
+          return true;
+        })
+        .catch(() => false)
+        .then((inScope) => {
+          // A redirect re-fires onBeforeRequest with the same requestId; only
+          // drop the entry if it's still the one this check was for.
+          if (!inScope && pending.get(details.requestId) === entry) pending.delete(details.requestId);
+          return inScope;
+        });
+      scopeChecks.set(details.requestId, check);
     },
     filter,
     ["requestBody"]
@@ -113,40 +135,55 @@ function attachTrafficListeners() {
     ["responseHeaders", "extraHeaders"]
   );
 
-  chrome.webRequest.onCompleted.addListener(async (details) => {
-    const item = pending.get(details.requestId);
-    if (!item) return;
-    pending.delete(details.requestId);
-    item.status = "completed";
-    item.durationMs = Date.now() - item.startedAt;
-    item.responseSize = details.responseSize ?? null;
-    if (item.response) item.response.statusCode = details.statusCode;
-    // Correlates with an Intercept edit for this same method+URL, if any —
-    // see edited-tracker.js for why this can't use a shared request ID.
-    // completedAt = startedAt + durationMs, matching how edited-tracker.js
-    // anchors matches against the pause moment rather than "now".
-    const editDiff = consumeEdited(item.request.method, item.request.url, item.startedAt + item.durationMs);
-    if (editDiff) {
-      item.edited = true;
-      item.editDiff = editDiff;
-    }
-    await addHistoryEntry(item);
-    onEntryCallback?.(item);
-  }, filter);
+  chrome.webRequest.onCompleted.addListener(
+    (details) =>
+      finalize(details, (item) => {
+        item.status = "completed";
+        item.responseSize = details.responseSize ?? null;
+        if (item.response) item.response.statusCode = details.statusCode;
+      }),
+    filter
+  );
 
-  chrome.webRequest.onErrorOccurred.addListener(async (details) => {
-    const item = pending.get(details.requestId);
-    if (!item) return;
-    pending.delete(details.requestId);
-    item.status = "error";
-    item.error = details.error;
-    item.durationMs = Date.now() - item.startedAt;
-    const editDiff = consumeEdited(item.request.method, item.request.url, item.startedAt + item.durationMs);
-    if (editDiff) {
-      item.edited = true;
-      item.editDiff = editDiff;
-    }
-    await addHistoryEntry(item);
-    onEntryCallback?.(item);
-  }, filter);
+  chrome.webRequest.onErrorOccurred.addListener(
+    (details) =>
+      finalize(details, (item) => {
+        item.status = "error";
+        item.error = details.error;
+      }),
+    filter
+  );
+}
+
+async function finalize(details, applyOutcome) {
+  // Removed before the !item return: an out-of-scope request's entry is
+  // already gone by now, but its check must not linger in the map.
+  const check = scopeChecks.get(details.requestId);
+  scopeChecks.delete(details.requestId);
+  const item = pending.get(details.requestId);
+  if (!item) return;
+  // Captured before awaiting: duration is when the request finished, not when the scope check resolved.
+  const durationMs = Date.now() - item.startedAt;
+  pending.delete(details.requestId);
+  if (!(await check)) return;
+  applyOutcome(item);
+  item.durationMs = durationMs;
+  // Correlates with an Intercept edit for this same method+URL, if any —
+  // see edited-tracker.js for why this can't use a shared request ID.
+  // completedAt = startedAt + durationMs, matching how edited-tracker.js
+  // anchors matches against the pause moment rather than "now".
+  const editDiff = consumeEdited(item.request.method, item.request.url, item.startedAt + item.durationMs);
+  if (editDiff) {
+    item.edited = true;
+    item.editDiff = editDiff;
+  }
+  // A body CDP already read for this request (Intercept attached) — see
+  // body-tracker.js. If it arrives after this point instead, it patches
+  // the saved entry directly.
+  if (item.response) {
+    const body = consumeResponseBody(item.request.method, item.request.url, item.startedAt + item.durationMs);
+    if (body != null) item.response.body = body;
+  }
+  await addHistoryEntry(item);
+  onEntryCallback?.(item);
 }

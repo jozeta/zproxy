@@ -19,6 +19,7 @@ test("a clean https/HTML response with every recommended header raises nothing",
       { name: "X-Content-Type-Options", value: "nosniff" },
       { name: "X-Frame-Options", value: "DENY" },
       { name: "Strict-Transport-Security", value: "max-age=31536000" },
+      { name: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
     ],
   };
   assert.deepEqual(checkResponse({ url: "https://example.com/" }, response), []);
@@ -63,7 +64,13 @@ test("a cookie over https missing Secure/HttpOnly/SameSite is flagged for each, 
 });
 
 test("a fully-flagged cookie is not raised when all three attributes are present", () => {
-  const response = { headers: [{ name: "Set-Cookie", value: "id=abc123; Secure; HttpOnly; SameSite=Strict" }] };
+  // HSTS is checked on every https response, so include it to isolate the cookie checks.
+  const response = {
+    headers: [
+      { name: "Set-Cookie", value: "id=abc123; Secure; HttpOnly; SameSite=Strict" },
+      { name: "Strict-Transport-Security", value: "max-age=31536000" },
+    ],
+  };
   const findings = checkResponse({ url: "https://example.com/" }, response);
   assert.deepEqual(findings, []);
 });

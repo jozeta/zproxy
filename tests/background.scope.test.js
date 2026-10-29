@@ -104,3 +104,43 @@ test("addHostToScope does not mutate the scope object it was given", () => {
   addHostToScope(scope, "c.com");
   assert.deepEqual(scope, { enabled: false, include: ["a.com"], exclude: ["b.com"] });
 });
+
+test("parseScopePattern splits scheme, host, port, and path — all but host optional", async () => {
+  const { parseScopePattern } = await import("../src/background/scope.js");
+  assert.deepEqual(parseScopePattern("example.com"), { scheme: null, host: "example.com", port: null, path: null });
+  assert.deepEqual(parseScopePattern("HTTPS://*.Example.com:8443/API/*"), { scheme: "https", host: "*.example.com", port: "8443", path: "/api/*" });
+  assert.deepEqual(parseScopePattern("[::1]:8080/x"), { scheme: null, host: "[::1]", port: "8080", path: "/x" });
+});
+
+test("a path pattern matches only URLs whose path starts with it", () => {
+  const scope = { enabled: true, include: ["example.com/api/"], exclude: [] };
+  assert.equal(isInScope("https://example.com/api/users?id=1", scope), true);
+  assert.equal(isInScope("https://example.com/apifoo", scope), false);
+  assert.equal(isInScope("https://example.com/", scope), false);
+});
+
+test("a path pattern's * is a wildcard within the path", () => {
+  const scope = { enabled: true, include: ["example.com/v*/admin"], exclude: [] };
+  assert.equal(isInScope("https://example.com/v2/admin/panel", scope), true);
+  assert.equal(isInScope("https://example.com/v2/public", scope), false);
+});
+
+test("scheme and port in a pattern are enforced, with default ports filled in", () => {
+  const scope = { enabled: true, include: ["https://example.com:443", "http://localhost:8787"], exclude: [] };
+  assert.equal(isInScope("https://example.com/", scope), true);
+  assert.equal(isInScope("http://example.com/", scope), false);
+  assert.equal(isInScope("https://example.com:8443/", scope), false);
+  assert.equal(isInScope("http://localhost:8787/x", scope), true);
+  assert.equal(isInScope("http://localhost:9999/x", scope), false);
+});
+
+test("a path-restricted Exclude carves a path out of an otherwise in-scope host", () => {
+  const scope = { enabled: true, include: ["example.com"], exclude: ["example.com/logout"] };
+  assert.equal(isInScope("https://example.com/account", scope), true);
+  assert.equal(isInScope("https://example.com/logout?next=/", scope), false);
+});
+
+test("addHostToScope still adds the plain host when only a path-restricted pattern mentions it", () => {
+  const scope = { enabled: true, include: ["example.com/api/"], exclude: [] };
+  assert.deepEqual(addHostToScope(scope, "example.com").include, ["example.com/api/", "example.com"]);
+});

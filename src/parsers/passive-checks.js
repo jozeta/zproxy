@@ -11,6 +11,7 @@ import { parseAllSetCookies } from "./cookies.js";
 import { parseQueryParams } from "./http.js";
 import { tryParseJson, looksLikeJson } from "./json.js";
 import { headersAsText } from "../intruder/search.js";
+import { checkAdvanced } from "./passive-checks-advanced.js";
 
 export const SEVERITY_ORDER = ["info", "low", "medium", "high"];
 
@@ -202,6 +203,7 @@ export function checkResponse(request, response) {
 
   findings.push(...checkSecrets(response));
   findings.push(...checkReflectedInput(request, response));
+  findings.push(...checkAdvanced(request, response, { isHttps, html }));
 
   return findings.sort((a, b) => SEVERITY_ORDER.indexOf(b.severity) - SEVERITY_ORDER.indexOf(a.severity));
 }

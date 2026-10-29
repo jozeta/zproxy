@@ -2,7 +2,7 @@ import { createInspector } from "../../components/inspector.js";
 import { downloadText } from "../../components/export.js";
 import { requestToCurl, buildHar, buildPostmanCollection, hostAndPath, withBodyUnavailable } from "../../../parsers/http.js";
 import { matchesEntryQuery } from "../../../parsers/entry-search.js";
-import { checkResponse } from "../../../parsers/passive-checks.js";
+import { findingsFor, coalesced } from "../../components/history-feed.js";
 import { infoIcon } from "../../components/tooltip.js";
 
 const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -51,7 +51,7 @@ export function renderHistory(container, ctx) {
     el(
       "p",
       "zp-hint",
-      "Passively captured traffic for in-scope hosts. Response bodies aren't available here — attach Intercept to inspect/edit a live body. A ✎ badge marks a request/response actually sent as an edited version (via Intercept or a Match/Replace rule); a ⚠ badge marks passive security findings (missing headers, cookie flags, ...) — open the row's Response > Security tab for details."
+      "Passively captured traffic for in-scope hosts. Response bodies are captured for text responses (HTML, JSON, JS, …) while Intercept is attached to the tab; without it, only headers are available. A ✎ badge marks a request/response actually sent as an edited version (via Intercept or a Match/Replace rule); a ⚠ badge marks passive security findings (missing headers, cookie flags, ...) — open the row's Response > Security tab for details."
     )
   );
 
@@ -255,7 +255,7 @@ export function renderHistory(container, ctx) {
       case "edited":
         return entry.edited ? 1 : 0;
       case "findings":
-        return checkResponse(entry.request, entry.response).length;
+        return findingsFor(entry).length;
       case "startedAt":
         return entry.startedAt || 0;
       case "method":
@@ -342,7 +342,7 @@ export function renderHistory(container, ctx) {
       tr.appendChild(editedTd);
 
       const findingsTd = document.createElement("td");
-      const findingCount = checkResponse(entry.request, entry.response).length;
+      const findingCount = findingsFor(entry).length;
       if (findingCount > 0) {
         const badge = el("span", "zp-badge zp-badge-security", `⚠ ${findingCount}`);
         badge.title = "Passive security findings — click the row, then the Response tab's Security tab for details.";
@@ -492,8 +492,10 @@ export function renderHistory(container, ctx) {
   }
   refresh();
 
+  // Coalesced: one refetch + re-render per burst of completed requests, not one per request.
+  const refreshSoon = coalesced(refresh);
   const unsub = ctx.onPush((event) => {
-    if (event.type === "history:new-entry") refresh();
+    if (event.type === "history:new-entry" || event.type === "history:entry-updated") refreshSoon();
   });
 
   // Keyboard shortcuts (Settings > Keyboard shortcuts) that make sense here.
@@ -507,6 +509,7 @@ export function renderHistory(container, ctx) {
 
   return () => {
     unsub();
+    refreshSoon.cancel();
     const handlers = ctx.sharedState.shortcutHandlers;
     if (handlers.search === searchShortcut) delete handlers.search;
     if (handlers.clearHistory === clearHistoryShortcut) delete handlers.clearHistory;

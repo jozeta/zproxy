@@ -8,7 +8,11 @@
 // the security logic itself, just a better way to look at what it found.
 import { createInspector } from "../../components/inspector.js";
 import { infoIcon } from "../../components/tooltip.js";
-import { checkResponse, SEVERITY_ORDER } from "../../../parsers/passive-checks.js";
+import { makeResizable } from "../../components/resizable.js";
+import { downloadText } from "../../components/export.js";
+import { buildFindingsMarkdown } from "../../../parsers/findings-report.js";
+import { SEVERITY_ORDER } from "../../../parsers/passive-checks.js";
+import { findingsFor, coalesced } from "../../components/history-feed.js";
 import { hostAndPath, withBodyUnavailable } from "../../../parsers/http.js";
 
 const SEVERITY_CHIPS = ["high", "medium", "low", "info"];
@@ -22,7 +26,7 @@ function el(tag, className, text) {
 }
 
 function severityBadge(severity) {
-  return el("span", `zp-badge ${SEVERITY_BADGE_CLASS[severity] || ""}`.trim(), severity.toUpperCase());
+  return el("span", `zp-badge ${SEVERITY_BADGE_CLASS[severity] || ""}`.trim(), severity.charAt(0).toUpperCase() + severity.slice(1));
 }
 
 /**
@@ -39,7 +43,7 @@ function severityBadge(severity) {
 function groupFindings(entries) {
   const groups = new Map(); // finding.id -> group
   for (const entry of entries) {
-    for (const finding of checkResponse(entry.request, entry.response)) {
+    for (const finding of findingsFor(entry)) {
       let group = groups.get(finding.id);
       if (!group) {
         group = { id: finding.id, severity: finding.severity, title: finding.title, detail: finding.detail, occurrences: [] };
@@ -71,12 +75,18 @@ export function renderFindings(container, ctx) {
   searchInput.placeholder = "Search title, detail, or an affected URL…";
   toolbar.appendChild(searchInput);
   for (const sev of SEVERITY_CHIPS) {
-    const btn = el("button", "zp-filter-chip", sev.toUpperCase());
+    const btn = el("button", "zp-filter-chip", sev.charAt(0).toUpperCase() + sev.slice(1));
     btn.type = "button";
     btn.dataset.severity = sev;
     toolbar.appendChild(btn);
   }
-  toolbar.appendChild(infoIcon("Click a severity chip to show only that severity; click again to clear it. Only one can be active at a time.", { label: "About severity filters" }));
+  toolbar.appendChild(infoIcon("Click a severity chip to show only that severity; click again to clear it. Only one can be active at a time. Each chip shows how many kinds of finding have that severity.", { label: "About severity filters" }));
+  const exportBtn = el("button", "zp-btn zp-btn-small", "Export report");
+  exportBtn.type = "button";
+  toolbar.appendChild(exportBtn);
+  toolbar.appendChild(
+    infoIcon("Downloads every finding currently shown (filters apply) as a Markdown report — severity summary, explanation, and affected URLs — to start a write-up from. Confirm each item by hand before reporting it.", { label: "About Export report" })
+  );
   container.appendChild(toolbar);
 
   const split = el("div", "zp-split");
@@ -85,6 +95,7 @@ export function renderFindings(container, ctx) {
   split.appendChild(top);
   split.appendChild(bottom);
   container.appendChild(split);
+  makeResizable(split, top, bottom, { storageKey: "zproxy.split.findings", label: "Resize findings list" });
 
   const table = document.createElement("table");
   table.className = "zp-table";
@@ -168,10 +179,18 @@ export function renderFindings(container, ctx) {
       return filters.sortDir === "asc" ? cmp : -cmp;
     });
     for (const chip of toolbar.querySelectorAll(".zp-filter-chip")) {
-      chip.classList.toggle("active", chip.dataset.severity === filters.severity);
+      const sev = chip.dataset.severity;
+      const n = allGroups.filter((g) => g.severity === sev).length;
+      chip.textContent = `${sev.charAt(0).toUpperCase() + sev.slice(1)} ${n}`;
+      chip.classList.toggle("active", sev === filters.severity);
     }
     renderRows();
   }
+
+  exportBtn.addEventListener("click", async () => {
+    const report = buildFindingsMarkdown(filtered, { version: chrome.runtime.getManifest().version });
+    await downloadText(`zproxy-findings-${Date.now()}.md`, report, "text/markdown");
+  });
 
   function renderRows() {
     tbody.textContent = "";
@@ -187,7 +206,7 @@ export function renderFindings(container, ctx) {
     }
     for (const group of filtered) {
       const tr = document.createElement("tr");
-      tr.className = group.id === selectedGroupId ? "selected" : "";
+      tr.className = `zp-sev-${group.severity}${group.id === selectedGroupId ? " selected" : ""}`;
       tr.addEventListener("click", () => selectGroup(group));
       const sevTd = document.createElement("td");
       sevTd.appendChild(severityBadge(group.severity));
@@ -264,7 +283,12 @@ export function renderFindings(container, ctx) {
   }
   refresh();
 
-  return ctx.onPush((event) => {
-    if (event.type === "history:new-entry") refresh();
+  const refreshSoon = coalesced(refresh);
+  const unsub = ctx.onPush((event) => {
+    if (event.type === "history:new-entry" || event.type === "history:entry-updated") refreshSoon();
   });
+  return () => {
+    unsub();
+    refreshSoon.cancel();
+  };
 }

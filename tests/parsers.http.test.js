@@ -140,3 +140,9 @@ test("buildPostmanCollection wraps entries under a v2.1 schema info block", () =
   assert.match(collection.info.schema, /schema\.getpostman\.com\/json\/collection\/v2\.1\.0/);
   assert.equal(collection.item.length, 1);
 });
+
+test("withBodyUnavailable leaves an entry alone once its body was captured (Intercept's Network capture)", () => {
+  const entry = { response: { statusCode: 200, headers: [], body: "<html></html>" } };
+  assert.equal(withBodyUnavailable(entry), entry);
+  assert.equal(withBodyUnavailable({ response: { statusCode: 200, headers: [], body: "" } }).response.bodyAvailable, undefined);
+});

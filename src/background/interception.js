@@ -8,6 +8,7 @@ import { getSettings } from "../storage/settings.js";
 import * as RequestInterceptor from "../interception/request-interceptor.js";
 import * as ResponseInterceptor from "../interception/response-interceptor.js";
 import * as WebSocketInterceptor from "../interception/websocket-interceptor.js";
+import * as NetworkBodyCapture from "../interception/network-body-capture.js";
 import { applyRulesToUrl, applyRulesToHeaders, applyRulesToBody } from "../interception/match-replace.js";
 
 const attachedTabs = new Set();
@@ -165,13 +166,9 @@ export async function detachTab(tabId) {
   const pendingResponses = ResponseInterceptor.getPendingItems(tabId);
   await Promise.all([
     ...pendingRequests.map((item) => RequestInterceptor.forward(tabId, item.fetchRequestId).catch(() => {})),
-    ...pendingResponses.map((item) => ResponseInterceptor.forwardUnmodified(tabId, item.fetchRequestId).catch(() => {})),
+    ...pendingResponses.map((item) => ResponseInterceptor.forward(tabId, item.fetchRequestId).catch(() => {})),
   ]);
-  attachedTabs.delete(tabId);
-  tabStats.delete(tabId);
-  RequestInterceptor.clearTab(tabId);
-  ResponseInterceptor.clearTab(tabId);
-  WebSocketInterceptor.clearTab(tabId);
+  clearTabState(tabId);
   try {
     await chrome.debugger.detach({ tabId });
   } catch {
@@ -192,6 +189,20 @@ export async function detachTab(tabId) {
 // regress.
 let debuggerListenersRegistered = false;
 
+async function bodyCaptureContext() {
+  const [scope, settings] = await Promise.all([getScope(), getSettings()]);
+  return { isInScope: (url) => isInScope(url, scope), maxBodyBytes: settings.maxBodyBytesStored };
+}
+
+function clearTabState(tabId) {
+  attachedTabs.delete(tabId);
+  tabStats.delete(tabId);
+  RequestInterceptor.clearTab(tabId);
+  ResponseInterceptor.clearTab(tabId);
+  WebSocketInterceptor.clearTab(tabId);
+  NetworkBodyCapture.clearTab(tabId);
+}
+
 function registerDebuggerListeners() {
   if (debuggerListenersRegistered || !chrome.debugger) return;
   debuggerListenersRegistered = true;
@@ -210,16 +221,19 @@ function registerDebuggerListeners() {
       method === "Network.webSocketCreated"
     ) {
       WebSocketInterceptor.handleEvent(tabId, method, params, emit);
+    } else if (
+      method === "Network.requestWillBeSent" ||
+      method === "Network.responseReceived" ||
+      method === "Network.loadingFinished" ||
+      method === "Network.loadingFailed"
+    ) {
+      NetworkBodyCapture.handleNetworkEvent(tabId, method, params, bodyCaptureContext);
     }
   });
 
   chrome.debugger.onDetach.addListener((source, reason) => {
     if (source.tabId == null) return;
-    attachedTabs.delete(source.tabId);
-    tabStats.delete(source.tabId);
-    RequestInterceptor.clearTab(source.tabId);
-    ResponseInterceptor.clearTab(source.tabId);
-    WebSocketInterceptor.clearTab(source.tabId);
+    clearTabState(source.tabId);
     emit({ type: "detached", tabId: source.tabId, reason });
   });
 }
@@ -234,13 +248,7 @@ if (typeof chrome !== "undefined") {
     if (permissions.permissions?.includes("debugger")) registerDebuggerListeners();
   });
 
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    attachedTabs.delete(tabId);
-    tabStats.delete(tabId);
-    RequestInterceptor.clearTab(tabId);
-    ResponseInterceptor.clearTab(tabId);
-    WebSocketInterceptor.clearTab(tabId);
-  });
+  chrome.tabs.onRemoved.addListener((tabId) => clearTabState(tabId));
 }
 
 function makeRequestRulesApplier(rules) {

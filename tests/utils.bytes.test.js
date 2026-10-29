@@ -19,7 +19,7 @@ test("textToBase64/base64ToText round-trip an empty string", () => {
 test("formatBytes scales through B/KB/MB/GB", () => {
   assert.equal(formatBytes(500), "500 B");
   assert.equal(formatBytes(2048), "2.0 KB");
-  assert.equal(formatBytes(5 * 1024 * 1024), "5 MB");
+  assert.equal(formatBytes(5 * 1024 * 1024), "5.0 MB");
 });
 
 test("formatBytes handles null/NaN without throwing", () => {

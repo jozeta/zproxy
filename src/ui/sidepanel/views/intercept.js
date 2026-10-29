@@ -1,3 +1,4 @@
+import { makeResizable } from "../../components/resizable.js";
 import { createInspector } from "../../components/inspector.js";
 import { infoIcon } from "../../components/tooltip.js";
 import { defaultInterceptRule, INTERCEPT_RULE_FIELDS, INTERCEPT_RULE_OPERATORS } from "../../../interception/intercept-rules.js";
@@ -281,6 +282,7 @@ export function renderIntercept(container, ctx) {
   split.appendChild(top);
   split.appendChild(bottom);
   container.appendChild(split);
+  makeResizable(split, top, bottom, { storageKey: "zproxy.split.intercept", minTop: 70, minBottom: 140, label: "Resize pending list" });
 
   const actions = el("div", "zp-pending-actions");
   // A single Forward button that relabels itself "Forward edited" the

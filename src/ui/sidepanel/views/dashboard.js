@@ -1,5 +1,5 @@
 import { infoIcon } from "../../components/tooltip.js";
-import { checkResponse } from "../../../parsers/passive-checks.js";
+import { findingsFor, coalesced } from "../../components/history-feed.js";
 
 export function renderDashboard(container, ctx) {
   container.textContent = "";
@@ -70,7 +70,7 @@ export function renderDashboard(container, ctx) {
     scopeStat.textContent = scope.enabled ? String(scope.include.length) : "off";
     rulesStat.textContent = String(rules.filter((r) => r.enabled).length);
     interceptStat.textContent = String(attachedTabs.length);
-    findingsStat.textContent = String(history.reduce((sum, e) => sum + checkResponse(e.request, e.response).length, 0));
+    findingsStat.textContent = String(history.reduce((sum, e) => sum + findingsFor(e).length, 0));
   }
   refresh();
 
@@ -91,8 +91,12 @@ export function renderDashboard(container, ctx) {
   }
   container.appendChild(steps);
 
+  const refreshSoon = coalesced(refresh);
   const unsub = ctx.onPush((event) => {
-    if (event.type === "history:new-entry" || event.type === "intercept:event") refresh();
+    if (event.type === "history:new-entry" || event.type === "history:entry-updated" || event.type === "intercept:event") refreshSoon();
   });
-  return unsub;
+  return () => {
+    unsub();
+    refreshSoon.cancel();
+  };
 }

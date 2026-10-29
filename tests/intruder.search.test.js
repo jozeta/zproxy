@@ -28,7 +28,9 @@ test("* is non-greedy — stops at the nearest following anchor", () => {
 
 test("? matches exactly one character, and a run of ?? matches exactly that many", () => {
   const compiled = compileSearchQuery("id=??");
-  assert.deepEqual(extractMatches("id=42 id=7 id=99", compiled), ["42", "99"]);
+  // The one-digit id sits at the very end so there's no second character
+  // after it — `?` matches any character, whitespace included.
+  assert.deepEqual(extractMatches("id=42 id=99 id=7", compiled), ["42", "99"]);
 });
 
 test("a query with more than one wildcard run extracts each span, joined with a separator", () => {

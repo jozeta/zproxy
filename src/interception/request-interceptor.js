@@ -8,6 +8,9 @@ import { shouldPauseForRules } from "./intercept-rules.js";
 
 const pendingByTab = new Map(); // tabId -> Map(fetchRequestId -> PendingItem)
 const dontInterceptAgain = new Set(); // "METHOD url" keys, cleared on service worker restart by design
+// Pending (possibly rule-modified) item -> the request exactly as CDP paused
+// it, so forwarding can send only the fields that actually changed.
+const originals = new WeakMap();
 
 function getPending(tabId) {
   if (!pendingByTab.has(tabId)) pendingByTab.set(tabId, new Map());
@@ -76,29 +79,49 @@ export async function handlePaused(tabId, params, { applyRules, manualPauseEnabl
         edited: item.request,
       }).catch(() => {});
     }
-    await continueWithItem(tabId, params.requestId, item);
+    await continueWithItem(tabId, params.requestId, item.request, original.request);
     return;
   }
 
+  originals.set(item, original.request);
   getPending(tabId).set(params.requestId, item);
   emit({ type: "request-paused", tabId, item });
 }
 
-async function continueWithItem(tabId, fetchRequestId, item) {
-  // Same fix as the response side (response-interceptor.js): Content-Length
-  // and friends describe wire framing, not content, and CDP rejects
-  // Content-Length outright if set explicitly — always strip these rather
-  // than trying to forward whatever the original request had.
-  const headers = withCorrectedFramingHeaders(item.request.headers.map((h) => ({ name: h.name, value: h.value })));
-  const cdpParams = { requestId: fetchRequestId, url: item.request.url, method: item.request.method, headers };
-  if (typeof item.request.body === "string") cdpParams.postData = textToBase64(item.request.body);
-  await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", cdpParams);
+/**
+ * Fetch.continueRequest params overriding only what differs from
+ * `original` (the request as CDP paused it; when unknown, everything is
+ * sent). Every override is optional in CDP, and resending an unchanged
+ * field isn't harmless: params.request.postData is a lossy text rendering
+ * for binary uploads (CDP's docs point to postDataEntries for that), so
+ * re-encoding it would corrupt e.g. a file upload that was only ever
+ * forwarded, never edited.
+ */
+export function buildContinueParams(fetchRequestId, request, original) {
+  const cdpParams = { requestId: fetchRequestId };
+  if (!original || request.url !== original.url) cdpParams.url = request.url;
+  if (!original || request.method !== original.method) cdpParams.method = request.method;
+  const bodyChanged = !original || (request.body ?? null) !== (original.body ?? null);
+  if (bodyChanged && typeof request.body === "string") cdpParams.postData = textToBase64(request.body);
+  // Headers go along with a body change too — the original framing headers
+  // describe the old body. Same fix as the response side
+  // (response-interceptor.js): Content-Length and friends describe wire
+  // framing, not content, and CDP rejects Content-Length outright if set
+  // explicitly — always strip these rather than forwarding the original's.
+  if (bodyChanged || !headersEqual(original.headers, request.headers)) {
+    cdpParams.headers = withCorrectedFramingHeaders(request.headers.map((h) => ({ name: h.name, value: h.value })));
+  }
+  return cdpParams;
+}
+
+async function continueWithItem(tabId, fetchRequestId, request, original) {
+  await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", buildContinueParams(fetchRequestId, request, original));
 }
 
 export async function forward(tabId, fetchRequestId) {
   const item = getPending(tabId).get(fetchRequestId);
   getPending(tabId).delete(fetchRequestId);
-  if (item) return continueWithItem(tabId, fetchRequestId, item);
+  if (item) return continueWithItem(tabId, fetchRequestId, item.request, originals.get(item));
   await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", { requestId: fetchRequestId });
 }
 
@@ -126,7 +149,7 @@ export async function forwardEdited(tabId, fetchRequestId, editedRequest) {
       edited: editedRequest,
     }).catch(() => {});
   }
-  await continueWithItem(tabId, fetchRequestId, { request: editedRequest });
+  await continueWithItem(tabId, fetchRequestId, editedRequest, original && originals.get(original));
 }
 
 export async function drop(tabId, fetchRequestId, reason = "BlockedByClient") {
@@ -156,7 +179,7 @@ export async function forwardAndDontInterceptAgain(tabId, fetchRequestId, edited
     }
   }
   getPending(tabId).delete(fetchRequestId);
-  return continueWithItem(tabId, fetchRequestId, { request: editedRequest });
+  return continueWithItem(tabId, fetchRequestId, editedRequest, original && originals.get(original));
 }
 
 export function clearDontInterceptAgain() {
