@@ -19,12 +19,15 @@ import {
   autoMarkHeaders,
   autoMarkBody,
 } from "../../../intruder/positions.js";
-import { defaultConfig, estimateCount, generatePayloads, DEFAULT_GENERATION_CAP } from "../../../intruder/payloads.js";
+import { defaultConfig, estimateCount, generatePayloads, DEFAULT_GENERATION_CAP, PAYLOAD_TYPES } from "../../../intruder/payloads.js";
+import { renderExtraPayloadFields } from "../../components/payload-fields.js";
+import { resultsToCsv } from "../../../intruder/export.js";
+import { downloadText } from "../../components/export.js";
 import { combine, totalRequestCount, ATTACK_TYPES } from "../../../intruder/combine.js";
 import { compileSearchQuery, searchResponse } from "../../../intruder/search.js";
 import { defaultMacro, applyMacroValue, extractMacroValue } from "../../../intruder/macro.js";
 import { parseHeaderLines } from "../../../parsers/headers.js";
-import { PROCESSING_RULE_TYPES, ruleTakesValue, defaultProcessingRule, applyProcessingRulesToAll } from "../../../intruder/processing.js";
+import { PROCESSING_RULE_TYPES, ruleTakesValue, ruleTakesMatch, defaultProcessingRule, applyProcessingRulesToAll } from "../../../intruder/processing.js";
 import { findAnomalies, sortResults, SORTABLE_RESULT_KEYS } from "../../../intruder/analysis.js";
 
 // Real requests going out to a real target — these bound how big an attack
@@ -34,6 +37,7 @@ import { findAnomalies, sortResults, SORTABLE_RESULT_KEYS } from "../../../intru
 // UI thread needs a hard backstop instead.
 const CONFIRM_THRESHOLD = 100;
 const HARD_CAP = 5000;
+const MAX_CONCURRENCY = 10;
 
 const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -58,6 +62,9 @@ function defaultIntruderState() {
     searchMode: "first",
     macro: defaultMacro(),
     delayMs: 0,
+    concurrency: 1,
+    retries: 0,
+    stopOnMatch: false,
     resultsSortKey: null, // null = natural send order
     resultsSortDir: "asc",
     results: [],
@@ -116,7 +123,7 @@ export function renderIntruder(container, ctx) {
     el(
       "p",
       "zp-hint",
-      "Automated attacks: mark payload positions in the request below with §, choose an attack type and payload source, then run it against the target. Every request is sent for real, sequentially, from this extension page."
+      "Automated attacks: mark payload positions in the request below with §, choose an attack type and payload source, then run it against the target. Every request is sent for real from this extension page — one at a time by default, or several in parallel with Concurrency."
     )
   );
 
@@ -295,8 +302,41 @@ export function renderIntruder(container, ctx) {
   delayInput.min = "0";
   delayInput.value = String(state.delayMs);
   settingsRow.appendChild(delayInput);
-  settingsRow.appendChild(infoIcon("Optional pause after each request. 0 sends as fast as the target responds.", { label: "About delay" }));
+  settingsRow.appendChild(infoIcon("Optional pause after each request (per worker when Concurrency > 1). 0 sends as fast as the target responds.", { label: "About delay" }));
   container.appendChild(settingsRow);
+
+  function numberSetting(label, key, min, max, hint) {
+    const row = el("div", "zp-form-row");
+    row.appendChild(el("label", "", label));
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = String(min);
+    input.max = String(max);
+    input.value = String(state[key]);
+    input.addEventListener("change", () => {
+      const v = Math.trunc(Number(input.value));
+      state[key] = Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : min;
+      input.value = String(state[key]);
+    });
+    row.appendChild(input);
+    row.appendChild(infoIcon(hint, { label: `About ${label}` }));
+    container.appendChild(row);
+  }
+  numberSetting("Concurrency", "concurrency", 1, MAX_CONCURRENCY, `How many requests are in flight at once (1–${MAX_CONCURRENCY}). Higher is faster but harder on the target and more likely to trip rate limits; a session-handling macro runs per request either way.`);
+  numberSetting("Retries on network error", "retries", 0, 5, "Re-sends a request that failed at the network level (connection reset, timeout), up to this many times, before recording it as an error. HTTP error statuses (4xx/5xx) are real responses and are never retried.");
+
+  const stopOnMatchRow = el("div", "zp-checkbox-row");
+  const stopOnMatchCheck = document.createElement("input");
+  stopOnMatchCheck.type = "checkbox";
+  stopOnMatchCheck.id = "intruder-stop-on-match";
+  stopOnMatchCheck.checked = state.stopOnMatch;
+  stopOnMatchCheck.addEventListener("change", () => (state.stopOnMatch = stopOnMatchCheck.checked));
+  const stopOnMatchLabel = el("label", "", "Stop at the first Grep-Match hit");
+  stopOnMatchLabel.htmlFor = stopOnMatchCheck.id;
+  stopOnMatchRow.appendChild(stopOnMatchCheck);
+  stopOnMatchRow.appendChild(stopOnMatchLabel);
+  stopOnMatchRow.appendChild(infoIcon("Ends the attack as soon as a response body contains any Grep-Match term — e.g. stop at the first \"Welcome back\" in a credential test instead of sending the rest.", { label: "About stop on match" }));
+  container.appendChild(stopOnMatchRow);
 
   const totalPreview = el("p", "zp-hint", "");
   container.appendChild(totalPreview);
@@ -306,8 +346,12 @@ export function renderIntruder(container, ctx) {
   startBtn.type = "button";
   const stopBtn = el("button", "zp-btn zp-btn-danger zp-btn-small", "Stop");
   stopBtn.type = "button";
+  const exportCsvBtn = el("button", "zp-btn zp-btn-small", "Export CSV");
+  exportCsvBtn.type = "button";
   runToolbar.appendChild(startBtn);
   runToolbar.appendChild(stopBtn);
+  runToolbar.appendChild(exportCsvBtn);
+  runToolbar.appendChild(infoIcon("Downloads the results table (payloads, status, length, time, Grep-Match hits, errors) as CSV for a spreadsheet or report.", { label: "About Export CSV" }));
   container.appendChild(runToolbar);
   const progressText = el("p", "zp-hint", "");
   container.appendChild(progressText);
@@ -416,11 +460,7 @@ export function renderIntruder(container, ctx) {
     const typeRow = el("div", "zp-form-row");
     typeRow.appendChild(el("label", "", "Payload type"));
     const typeSelect = document.createElement("select");
-    for (const opt of [
-      { value: "simpleList", label: "Simple list" },
-      { value: "numbers", label: "Numbers" },
-      { value: "bruteForce", label: "Brute forcer" },
-    ]) {
+    for (const opt of PAYLOAD_TYPES) {
       const o = document.createElement("option");
       o.value = opt.value;
       o.textContent = opt.label;
@@ -459,10 +499,20 @@ export function renderIntruder(container, ctx) {
           renderProcessingRules();
         });
         row.appendChild(typeSelectForRule);
+        if (ruleTakesMatch(rule.type)) {
+          const matchInput = document.createElement("input");
+          matchInput.type = "text";
+          matchInput.placeholder = "find";
+          matchInput.value = rule.match || "";
+          matchInput.addEventListener("input", () => {
+            rule.match = matchInput.value;
+          });
+          row.appendChild(matchInput);
+        }
         if (ruleTakesValue(rule.type)) {
           const valueInput = document.createElement("input");
           valueInput.type = "text";
-          valueInput.placeholder = "text";
+          valueInput.placeholder = rule.type === "replace" ? "replace with" : rule.type === "skipIfMatches" ? "regex" : "text";
           valueInput.value = rule.value || "";
           valueInput.addEventListener("input", () => {
             rule.value = valueInput.value;
@@ -594,6 +644,16 @@ export function renderIntruder(container, ctx) {
         fieldsHost.appendChild(
           el("p", "zp-hint", "Exhaustively tries every combination of the character set, from Min length to Max length — grows extremely fast with length. Generation is capped at " + DEFAULT_GENERATION_CAP.toLocaleString() + " payloads per set.")
         );
+      } else {
+        renderExtraPayloadFields(
+          cfg,
+          fieldsHost,
+          (patch) => {
+            state.payloadSets[activePayloadSetIndex] = { ...state.payloadSets[activePayloadSetIndex], ...patch };
+            refreshCount();
+          },
+          () => state.payloadSets[activePayloadSetIndex]
+        );
       }
       refreshCount();
     }
@@ -712,7 +772,7 @@ export function renderIntruder(container, ctx) {
     if (!state.running && state.sentCount === 0) {
       progressText.textContent = "";
     } else {
-      progressText.textContent = `Sent ${state.sentCount}${total ? ` / ${formatCount(total)}` : ""}${state.running ? "…" : state.stopRequested ? " (stopped)" : " (done)"}`;
+      progressText.textContent = `Sent ${state.sentCount}${total ? ` / ${formatCount(total)}` : ""}${state.running ? "…" : state.stoppedOnMatch ? ` (stopped at #${state.stoppedOnMatch}: Grep-Match hit)` : state.stopRequested ? " (stopped)" : " (done)"}`;
     }
     startBtn.disabled = state.running;
     stopBtn.disabled = !state.running;
@@ -832,10 +892,46 @@ export function renderIntruder(container, ctx) {
         ? [await buildPayloadSet(state.payloadSets[0] || defaultConfig("simpleList"))]
         : await Promise.all(state.payloadSets.slice(0, positionCount).map((cfg) => buildPayloadSet(cfg)));
 
-    let index = 0;
-    for (const tuple of combine(state.attackType, setsForRun, positionCount)) {
-      if (state.stopRequested) break;
-      index += 1;
+    // A pool of `concurrency` workers pulling from ONE shared generator, so
+    // every combination is sent exactly once and indexes stay in send order.
+    // One AbortController for the whole attack: Stop cancels every in-flight
+    // request at once.
+    const tuples = combine(state.attackType, setsForRun, positionCount);
+    const controller = new AbortController();
+    state.currentAbortController = controller;
+    const grepTerms = currentGrepTerms();
+    const pause = () => (state.delayMs > 0 ? new Promise((resolve) => setTimeout(resolve, state.delayMs)) : null);
+    let nextIndex = 0;
+
+    /** Inserts a finished row in index order (workers finish out of order) and tells the mounted view. */
+    function record(row) {
+      let at = state.results.length;
+      while (at > 0 && state.results[at - 1].index > row.index) at--;
+      state.results.splice(at, 0, row);
+      state.sentCount += 1;
+      // Looked up fresh (not the closure's own appendResultRow/updateProgress)
+      // because this loop keeps running even if the user navigates away and
+      // back mid-attack — renderIntruder tears down and rebuilds this view's
+      // DOM on every navigation, so "the currently mounted view" is whatever
+      // the latest render pointed state.notify at, not necessarily this one.
+      state.notify?.(row);
+      if (state.stopOnMatch && row.response && grepTerms.some((t) => row.response.body.includes(t))) {
+        state.stopRequested = true;
+        state.stoppedOnMatch = row.index;
+        controller.abort();
+      }
+    }
+
+    async function worker() {
+      while (!state.stopRequested) {
+        const next = tuples.next();
+        if (next.done) return;
+        await sendOne(next.value, ++nextIndex);
+        await pause();
+      }
+    }
+
+    async function sendOne(tuple, index) {
       let built = applyPayloads(state.fields, tuple);
 
       if (state.macro?.enabled) {
@@ -850,21 +946,16 @@ export function renderIntruder(container, ctx) {
           headers: parseHeaderLines(state.macro.headersText),
           body: state.macro.body,
         };
-        const macroResult = await sendRequest(macroRequest);
+        const macroResult = await sendRequest(macroRequest, { signal: controller.signal });
+        if (macroResult.aborted) return;
         if (!macroResult.ok) {
-          state.results.push({ index, payloads: tuple, request: null, response: null, status: null, length: null, timeMs: null, error: `Session handling macro failed: ${macroResult.error}` });
-          state.sentCount = index;
-          state.notify?.(state.results[state.results.length - 1]);
-          if (state.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.delayMs));
-          continue;
+          record({ index, payloads: tuple, request: null, response: null, status: null, length: null, timeMs: null, error: `Session handling macro failed: ${macroResult.error}` });
+          return;
         }
         const macroValue = extractMacroValue(macroResult.response, state.macro.extractQuery);
         if (macroValue == null) {
-          state.results.push({ index, payloads: tuple, request: null, response: null, status: null, length: null, timeMs: null, error: "Session handling macro ran, but its Extract value query found no match." });
-          state.sentCount = index;
-          state.notify?.(state.results[state.results.length - 1]);
-          if (state.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.delayMs));
-          continue;
+          record({ index, payloads: tuple, request: null, response: null, status: null, length: null, timeMs: null, error: "Session handling macro ran, but its Extract value query found no match." });
+          return;
         }
         built = applyMacroValue(built, macroValue);
       }
@@ -876,11 +967,13 @@ export function renderIntruder(container, ctx) {
         headers: parseHeaderLines(built.headersText),
         body: built.body,
       };
-      const controller = new AbortController();
-      state.currentAbortController = controller;
-      const result = await sendRequest(request, { signal: controller.signal });
-      if (result.aborted) break;
-      const row = {
+      let result = await sendRequest(request, { signal: controller.signal });
+      // Network-level failures only — an HTTP 4xx/5xx is a real answer, never retried.
+      for (let attempt = 0; attempt < (state.retries ?? 0) && !result.ok && !result.aborted; attempt++) {
+        result = await sendRequest(request, { signal: controller.signal });
+      }
+      if (result.aborted) return;
+      record({
         index,
         payloads: tuple,
         request,
@@ -889,21 +982,22 @@ export function renderIntruder(container, ctx) {
         length: result.ok ? result.response.body.length : null,
         timeMs: result.ok ? result.response.durationMs : null,
         error: result.ok ? null : result.error,
-      };
-      state.results.push(row);
-      state.sentCount = index;
-      // Looked up fresh (not the closure's own appendResultRow/updateProgress)
-      // because this loop keeps running even if the user navigates away and
-      // back mid-attack — renderIntruder tears down and rebuilds this view's
-      // DOM on every navigation, so "the currently mounted view" is whatever
-      // the latest render pointed state.notify at, not necessarily this one.
-      state.notify?.(row);
-      if (state.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, state.delayMs));
+      });
     }
+
+    state.stoppedOnMatch = null;
+    const workerCount = Math.max(1, Math.min(MAX_CONCURRENCY, state.concurrency ?? 1));
+    await Promise.all(Array.from({ length: workerCount }, worker));
     state.running = false;
     state.currentAbortController = null;
     state.notify?.();
   }
+
+  exportCsvBtn.addEventListener("click", async () => {
+    if (!state.results.length) return;
+    const csv = resultsToCsv(state.results, currentGrepTerms());
+    await downloadText(`zproxy-intruder-${Date.now()}.csv`, csv, "text/csv");
+  });
 
   // A stable reference so cleanup can tell "is state.notify still mine?"
   // rather than blindly nulling it out from under a newer mount. A live row
@@ -914,7 +1008,9 @@ export function renderIntruder(container, ctx) {
   // sorted, anomaly-highlighted render regardless.
   const myNotify = (row) => {
     if (row) {
-      if (state.resultsSortKey) renderAllResults();
+      // A plain append is only right when the row landed last — with
+      // Concurrency > 1 a lower-index request can finish after a higher one.
+      if (state.resultsSortKey || state.results[state.results.length - 1] !== row) renderAllResults();
       else appendResultRow(row);
     } else {
       renderAllResults();

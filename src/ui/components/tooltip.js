@@ -1,3 +1,4 @@
+import { icon as glyph } from "./icons.js";
 // Small "i" info icon that shows a hover/focus tooltip. Appended to
 // document.body and positioned with fixed coordinates computed from the
 // icon's bounding rect, rather than a CSS-only absolute-positioned popup —
@@ -69,7 +70,7 @@ export function infoIcon(text, { label = "More info" } = {}) {
   const icon = document.createElement("button");
   icon.type = "button";
   icon.className = "zp-info-icon";
-  icon.textContent = "i";
+  icon.appendChild(glyph("info", { size: 14 }));
   icon.setAttribute("aria-label", label);
   icon.addEventListener("mouseenter", () => showTooltip(icon, text));
   icon.addEventListener("mouseleave", () => {

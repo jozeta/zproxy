@@ -26,8 +26,13 @@ async function listJsFiles(dir) {
   return files;
 }
 
-function stripLineComments(source) {
+// Block comments are only stripped when they open at the start of a line
+// (JSDoc style) — a mid-line "/*" is far more likely to be inside a string
+// (e.g. an Accept value of "*/*") and stripping from there could swallow
+// real code, hiding a sink this test exists to catch.
+function stripComments(source) {
   return source
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, "")
     .split("\n")
     .map((line) => {
       const idx = line.indexOf("//");
@@ -42,7 +47,7 @@ test("no shipped source file contains an HTML/JS execution sink outside of comme
 
   const offenders = [];
   for (const file of files) {
-    const code = stripLineComments(await readFile(file, "utf8"));
+    const code = stripComments(await readFile(file, "utf8"));
     for (const sink of FORBIDDEN_SINKS) {
       if (code.includes(sink)) offenders.push(`${path.relative(SRC_DIR, file)} contains "${sink}"`);
     }

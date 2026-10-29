@@ -29,7 +29,7 @@ test("diffText reconstructs both original strings from the segments", () => {
 test("diffText marks a single changed word as removed+added around shared equal context", () => {
   const { segments } = diffText("status: 200 ok", "status: 403 ok");
   const types = segments.map((s) => s.type);
-  assert.deepEqual(types, ["equal", "removed", "equal", "added", "equal"]);
+  assert.deepEqual(types, ["equal", "removed", "added", "equal"]);
   assert.equal(segments.find((s) => s.type === "removed").text, "200");
   assert.equal(segments.find((s) => s.type === "added").text, "403");
 });

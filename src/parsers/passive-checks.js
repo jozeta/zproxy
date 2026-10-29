@@ -11,6 +11,8 @@ import { parseAllSetCookies } from "./cookies.js";
 import { parseQueryParams } from "./http.js";
 import { tryParseJson, looksLikeJson } from "./json.js";
 import { headersAsText } from "../intruder/search.js";
+import { checkAdvanced } from "./passive-checks-advanced.js";
+import { checkExtended } from "./passive-checks-extended.js";
 
 export const SEVERITY_ORDER = ["info", "low", "medium", "high"];
 
@@ -42,6 +44,23 @@ const SECRET_SIGNATURES = [
   { id: "stripe-key", label: "Stripe live API key", severity: "high", pattern: /\bsk_live_[0-9a-zA-Z]{24,}\b/g },
   { id: "sendgrid-key", label: "SendGrid API key", severity: "high", pattern: /\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b/g },
   { id: "npm-token", label: "npm access token", severity: "high", pattern: /\bnpm_[A-Za-z0-9]{36}\b/g },
+  // Formats from the Gitleaks rule set (as the BApp "Gitleaks Integration" scans for).
+  { id: "stripe-restricted-key", label: "Stripe restricted key", severity: "high", pattern: /\brk_live_[0-9a-zA-Z]{24,}\b/g },
+  { id: "gitlab-token", label: "GitLab personal access token", severity: "high", pattern: /\bglpat-[0-9A-Za-z_-]{20}\b/g },
+  { id: "openai-key", label: "OpenAI API key", severity: "high", pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}\b/g },
+  { id: "anthropic-key", label: "Anthropic API key", severity: "high", pattern: /\bsk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,}\b/g },
+  { id: "slack-webhook", label: "Slack incoming webhook", severity: "high", pattern: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]{20,}/g },
+  { id: "discord-webhook", label: "Discord webhook", severity: "high", pattern: /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]{60,}/g },
+  { id: "twilio-key", label: "Twilio API key", severity: "high", pattern: /\bSK[0-9a-f]{32}\b/g },
+  { id: "mailgun-key", label: "Mailgun API key", severity: "high", pattern: /\bkey-[0-9a-f]{32}\b/g },
+  { id: "azure-storage-key", label: "Azure storage connection string", severity: "high", pattern: /AccountKey=[A-Za-z0-9+\/=]{80,}/g },
+  { id: "digitalocean-token", label: "DigitalOcean token", severity: "high", pattern: /\bdo[opr]_v1_[a-f0-9]{64}\b/g },
+  { id: "telegram-bot-token", label: "Telegram bot token", severity: "high", pattern: /\b\d{8,10}:AA[0-9A-Za-z_-]{33}\b/g },
+  { id: "shopify-token", label: "Shopify access token", severity: "high", pattern: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g },
+  { id: "pypi-token", label: "PyPI upload token", severity: "high", pattern: /\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}\b/g },
+  { id: "vault-token", label: "HashiCorp Vault token", severity: "high", pattern: /\bhvs\.[A-Za-z0-9_-]{90,}\b/g },
+  { id: "mapbox-secret", label: "Mapbox secret token", severity: "high", pattern: /\bsk\.eyJ[A-Za-z0-9_-]{50,}\.[A-Za-z0-9_-]{20,}\b/g },
+  { id: "google-oauth-secret", label: "Google OAuth client secret", severity: "high", pattern: /\bGOCSPX-[A-Za-z0-9_-]{28}\b/g },
   { id: "private-key-block", label: "Private key block", severity: "high", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/g },
   {
     id: "generic-secret-assignment",
@@ -198,10 +217,15 @@ export function checkResponse(request, response) {
   const serverBanner = [getHeaderValue(response.headers, "server"), getHeaderValue(response.headers, "x-powered-by")].filter(Boolean).join(" / ");
   if (/[0-9]+\.[0-9]+/.test(serverBanner)) {
     findings.push({ id: "verbose-server-header", severity: "info", title: "Server banner reveals a version number", detail: `"${serverBanner}" — useful for an attacker fingerprinting known vulnerabilities for that exact version.` });
+  } else if (getHeaderValue(response.headers, "x-powered-by")) {
+    // No version, but still a free fingerprint (ZAP rule 10037 flags any X-Powered-By).
+    findings.push({ id: "x-powered-by-disclosure", severity: "info", title: "X-Powered-By reveals the technology stack", detail: `X-Powered-By: ${getHeaderValue(response.headers, "x-powered-by")} — tells an attacker which framework to target. The header serves no purpose for browsers and can be removed.` });
   }
 
   findings.push(...checkSecrets(response));
   findings.push(...checkReflectedInput(request, response));
+  findings.push(...checkAdvanced(request, response, { isHttps, html }));
+  findings.push(...checkExtended(request, response, { isHttps, html }));
 
   return findings.sort((a, b) => SEVERITY_ORDER.indexOf(b.severity) - SEVERITY_ORDER.indexOf(a.severity));
 }

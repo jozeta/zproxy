@@ -68,3 +68,20 @@ export function urlMatchesFilter(url, filter) {
   }
   return url.includes(filter);
 }
+
+/**
+ * Runs one content rule over sample text the way live traffic would see it,
+ * for the Match & Replace view's tester: {output, matches, error}. `matches`
+ * counts replacements made; `error` is a regex compile error (the rule then
+ * does nothing, exactly as it would on real traffic).
+ */
+export function testRule(rule, sample) {
+  const compiled = compileRule({ ...rule, enabled: true });
+  if (compiled.regexError) return { output: sample, matches: 0, error: compiled.regexError };
+  if (!compiled.match) return { output: sample, matches: 0, error: null };
+  const matches =
+    compiled.matchType === "regex"
+      ? [...sample.matchAll(new RegExp(compiled.regex.source, compiled.regex.flags))].length
+      : sample.split(compiled.match).length - 1;
+  return { output: applyStringRule(compiled, sample), matches, error: null };
+}

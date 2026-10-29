@@ -1,4 +1,6 @@
 import { infoIcon } from "../../components/tooltip.js";
+import { cookieMatchesScope } from "../../../background/scope.js";
+import { scopeIsDefined } from "../../../background/findings-monitor.js";
 
 // Full cookie CRUD via chrome.cookies. Reading/writing a cookie for a given
 // domain requires host permission for that domain (see docs/CAPABILITIES.md)
@@ -48,6 +50,15 @@ export function renderCookies(container, ctx) {
   addBtn.type = "button";
   toolbar.appendChild(searchInput);
   toolbar.appendChild(infoIcon("Filters the list below by domain, name, or value — doesn't change or delete anything.", { label: "About search" }));
+  // Shown only once a Scope is defined: narrows the list to cookies that would
+  // be sent to an in-scope site (scope.js cookieMatchesScope).
+  const scopeChip = el("button", "zp-filter-chip", "In scope");
+  scopeChip.type = "button";
+  scopeChip.hidden = true;
+  toolbar.appendChild(scopeChip);
+  const scopeChipInfo = infoIcon("Shows only cookies the browser would send to a site in your Scope — including parent-domain cookies (a .example.com cookie is sent to app.example.com). Click again to show every cookie.", { label: "About the In scope filter" });
+  scopeChipInfo.hidden = true;
+  toolbar.appendChild(scopeChipInfo);
   toolbar.appendChild(addBtn);
   toolbar.appendChild(infoIcon("Opens a blank cookie form. Saving writes it to the browser's real cookie jar immediately.", { label: "About Add cookie" }));
   container.appendChild(toolbar);
@@ -59,6 +70,7 @@ export function renderCookies(container, ctx) {
   container.appendChild(list);
 
   let cookies = [];
+  let scope = null;
   let search = "";
 
   function fieldRow(labelText, inputEl, info) {
@@ -189,9 +201,17 @@ export function renderCookies(container, ctx) {
 
   function renderList() {
     list.textContent = "";
-    const visible = cookies.filter((c) => matches(c, search));
+    const defined = scopeIsDefined(scope);
+    const onlyInScope = defined && !!ctx.sharedState.cookiesOnlyInScope;
+    scopeChip.hidden = !defined;
+    scopeChipInfo.hidden = !defined;
+    scopeChip.classList.toggle("active", onlyInScope);
+    scopeChip.textContent = `In scope (${cookies.filter((c) => cookieMatchesScope(c, scope)).length})`;
+    const visible = cookies.filter((c) => matches(c, search) && (!onlyInScope || cookieMatchesScope(c, scope)));
     if (visible.length === 0) {
-      list.appendChild(el("div", "zp-empty", cookies.length === 0 ? "No cookies visible yet." : "No cookies match the filter."));
+      list.appendChild(
+        el("div", "zp-empty", cookies.length === 0 ? "No cookies visible yet." : onlyInScope && !search ? "No cookies for the sites in your Scope yet." : "No cookies match the filter.")
+      );
       return;
     }
     for (const c of visible) {
@@ -226,6 +246,10 @@ export function renderCookies(container, ctx) {
     }
   }
 
+  scopeChip.addEventListener("click", () => {
+    ctx.sharedState.cookiesOnlyInScope = !ctx.sharedState.cookiesOnlyInScope;
+    renderList();
+  });
   searchInput.addEventListener("input", () => {
     search = searchInput.value;
     renderList();
@@ -238,7 +262,7 @@ export function renderCookies(container, ctx) {
 
   async function refresh() {
     hostNotice.hidden = await ctx.api("permissions:hasHostAccess");
-    cookies = await ctx.api("cookies:getAll", {});
+    [cookies, scope] = await Promise.all([ctx.api("cookies:getAll", {}), ctx.api("scope:get")]);
     renderList();
   }
   refresh();

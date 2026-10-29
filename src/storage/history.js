@@ -5,19 +5,31 @@ import { getSettings } from "./settings.js";
 
 let memoryHistory = [];
 let loaded = false;
+let loadPromise = null;
 let persistTimer = null;
 
 function storageAreaFor(settings) {
   return settings.persistHistoryToDisk ? chrome.storage.local : chrome.storage.session;
 }
 
-export async function loadHistory() {
-  const settings = await getSettings();
-  const area = storageAreaFor(settings);
-  const { history } = await area.get("history");
-  memoryHistory = history || [];
-  loaded = true;
-  return memoryHistory;
+// Memoized: the service worker calls this at startup without awaiting, and
+// the first addHistoryEntry() (often the very request that woke it) calls it
+// again — two independent loads could resolve out of order and replace
+// memoryHistory after an entry had already been pushed onto it.
+export function loadHistory() {
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      const settings = await getSettings();
+      const { history } = await storageAreaFor(settings).get("history");
+      memoryHistory = history || [];
+      loaded = true;
+      return memoryHistory;
+    })();
+    loadPromise.catch(() => {
+      loadPromise = null; // let the next caller retry
+    });
+  }
+  return loadPromise;
 }
 
 export async function getHistory() {
@@ -46,7 +58,7 @@ export async function addHistoryEntry(entry) {
   while (memoryHistory.length > settings.maxHistoryEntries) {
     memoryHistory.shift();
   }
-  schedulePersist(settings);
+  schedulePersist();
   return entry;
 }
 
@@ -56,21 +68,45 @@ export async function updateHistoryEntry(id, patch) {
   if (idx === -1) return null;
   const settings = await getSettings();
   memoryHistory[idx] = truncateBodies({ ...memoryHistory[idx], ...patch }, settings.maxBodyBytesStored);
-  schedulePersist(settings);
+  schedulePersist();
   return memoryHistory[idx];
 }
 
+// Clears both areas, not just the current one: history persisted to disk
+// before the user switched persistence off must not survive a "Clear".
 export async function clearHistory() {
   memoryHistory = [];
-  const settings = await getSettings();
-  await persistNow(settings);
+  await Promise.all([chrome.storage.local.remove("history"), chrome.storage.session.remove("history")]);
 }
 
-function schedulePersist(settings) {
+/**
+ * Call after settings.persistHistoryToDisk changes: moves the in-memory
+ * history to the newly selected area and deletes it from the other one.
+ * Turning persistence off must actually take captured Authorization headers
+ * and session cookies back off disk (docs/SECURITY.md), not just stop
+ * writing new ones there.
+ */
+export async function applyHistoryPersistence(settings) {
+  if (!loaded) await loadHistory();
+  const other = settings.persistHistoryToDisk ? chrome.storage.session : chrome.storage.local;
+  await persistNow(settings);
+  await other.remove("history");
+}
+
+function schedulePersist() {
   if (persistTimer) return;
-  persistTimer = setTimeout(() => {
+  persistTimer = setTimeout(async () => {
     persistTimer = null;
-    persistNow(settings).catch(() => {});
+    // Settings are read when the timer fires, not when it was scheduled —
+    // otherwise a write queued just before persistence was switched off
+    // would put history back on disk after applyHistoryPersistence() removed it.
+    try {
+      await persistNow(await getSettings());
+    } catch (err) {
+      // Most likely chrome.storage.session's quota — history stays in
+      // memory, but won't survive a service worker restart.
+      console.warn("[ZProxy] could not persist history:", err.message);
+    }
   }, 400);
 }
 

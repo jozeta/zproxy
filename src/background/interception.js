@@ -8,9 +8,21 @@ import { getSettings } from "../storage/settings.js";
 import * as RequestInterceptor from "../interception/request-interceptor.js";
 import * as ResponseInterceptor from "../interception/response-interceptor.js";
 import * as WebSocketInterceptor from "../interception/websocket-interceptor.js";
+import * as NetworkBodyCapture from "../interception/network-body-capture.js";
 import { applyRulesToUrl, applyRulesToHeaders, applyRulesToBody } from "../interception/match-replace.js";
 
 const attachedTabs = new Set();
+// Tabs the debugger is attached to only to OBSERVE (Network domain, no
+// Fetch.enable, so nothing ever pauses) — for capturing response bodies for
+// History/Findings without Intercept. See background/passive-observer.js.
+const observedTabs = new Set();
+// Tabs whose debugger session the user ended themselves (Chrome's "Cancel"
+// on the debugging banner): never re-attached automatically until the tab
+// closes — the user said no.
+const optedOutTabs = new Set();
+// (tabId) => Promise<boolean>: should a tab keep being observed after
+// Intercept is turned off? Set by passive-observer.js.
+let keepObservingPolicy = async () => false;
 const listeners = new Set();
 // Per-tab counters so the UI can tell "nothing paused because Intercept
 // isn't seeing any of your traffic" apart from "nothing paused because
@@ -38,6 +50,46 @@ function emit(event) {
 
 export function isAttached(tabId) {
   return attachedTabs.has(tabId);
+}
+
+export function isObserved(tabId) {
+  return observedTabs.has(tabId);
+}
+
+export function isOptedOut(tabId) {
+  return optedOutTabs.has(tabId);
+}
+
+export function setKeepObservingPolicy(fn) {
+  keepObservingPolicy = fn;
+}
+
+/** Attaches in observe-only mode (no pausing). A no-op if already attached or observed, or if the user ended a session on this tab. */
+export async function observeTab(tabId) {
+  if (attachedTabs.has(tabId) || observedTabs.has(tabId) || optedOutTabs.has(tabId) || !chrome.debugger) return false;
+  registerDebuggerListeners();
+  observedTabs.add(tabId); // claimed before the await, so a second call can't double-attach
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+    await chrome.debugger.sendCommand({ tabId }, "Network.enable", {});
+  } catch {
+    observedTabs.delete(tabId);
+    return false;
+  }
+  emit({ type: "observing", tabId });
+  return true;
+}
+
+/** Ends an observe-only session (Intercept sessions are left alone). */
+export async function stopObserving(tabId) {
+  if (!observedTabs.has(tabId)) return;
+  clearTabState(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch {
+    /* tab may already be closed */
+  }
+  emit({ type: "observing-stopped", tabId });
 }
 
 export function getAttachedTabs() {
@@ -124,10 +176,16 @@ export async function attachTab(tabId) {
   if (!chrome.debugger) return { ok: false, error: "The debugger permission has not been granted yet." };
   registerDebuggerListeners();
   tabStats.set(tabId, { seen: 0, outOfScope: 0 });
-  try {
-    await chrome.debugger.attach({ tabId }, "1.3");
-  } catch (err) {
-    return { ok: false, error: err.message };
+  // Already observing (passive body capture): reuse that debugger session —
+  // a second attach would fail — and just turn pausing on.
+  const upgrading = observedTabs.delete(tabId);
+  optedOutTabs.delete(tabId); // an explicit Intercept click overrides an earlier "Cancel"
+  if (!upgrading) {
+    try {
+      await chrome.debugger.attach({ tabId }, "1.3");
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   }
   attachedTabs.add(tabId);
   try {
@@ -165,13 +223,26 @@ export async function detachTab(tabId) {
   const pendingResponses = ResponseInterceptor.getPendingItems(tabId);
   await Promise.all([
     ...pendingRequests.map((item) => RequestInterceptor.forward(tabId, item.fetchRequestId).catch(() => {})),
-    ...pendingResponses.map((item) => ResponseInterceptor.forwardUnmodified(tabId, item.fetchRequestId).catch(() => {})),
+    ...pendingResponses.map((item) => ResponseInterceptor.forward(tabId, item.fetchRequestId).catch(() => {})),
   ]);
-  attachedTabs.delete(tabId);
-  tabStats.delete(tabId);
-  RequestInterceptor.clearTab(tabId);
-  ResponseInterceptor.clearTab(tabId);
-  WebSocketInterceptor.clearTab(tabId);
+  // Still in scope with passive capture on: stop pausing but keep the
+  // session for body capture, rather than detaching and re-attaching.
+  if (await keepObservingPolicy(tabId).catch(() => false)) {
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Fetch.disable", {});
+      attachedTabs.delete(tabId);
+      tabStats.delete(tabId);
+      RequestInterceptor.clearTab(tabId);
+      ResponseInterceptor.clearTab(tabId);
+      observedTabs.add(tabId);
+      emit({ type: "detached", tabId });
+      emit({ type: "observing", tabId });
+      return;
+    } catch {
+      /* session gone — fall through to a full cleanup */
+    }
+  }
+  clearTabState(tabId);
   try {
     await chrome.debugger.detach({ tabId });
   } catch {
@@ -192,13 +263,28 @@ export async function detachTab(tabId) {
 // regress.
 let debuggerListenersRegistered = false;
 
+async function bodyCaptureContext() {
+  const [scope, settings] = await Promise.all([getScope(), getSettings()]);
+  return { isInScope: (url) => isInScope(url, scope), maxBodyBytes: settings.maxBodyBytesStored };
+}
+
+function clearTabState(tabId) {
+  attachedTabs.delete(tabId);
+  observedTabs.delete(tabId);
+  tabStats.delete(tabId);
+  RequestInterceptor.clearTab(tabId);
+  ResponseInterceptor.clearTab(tabId);
+  WebSocketInterceptor.clearTab(tabId);
+  NetworkBodyCapture.clearTab(tabId);
+}
+
 function registerDebuggerListeners() {
   if (debuggerListenersRegistered || !chrome.debugger) return;
   debuggerListenersRegistered = true;
 
   chrome.debugger.onEvent.addListener((source, method, params) => {
     const tabId = source.tabId;
-    if (tabId == null || !attachedTabs.has(tabId)) return;
+    if (tabId == null || (!attachedTabs.has(tabId) && !observedTabs.has(tabId))) return;
 
     if (method === "Fetch.requestPaused") {
       handleFetchPaused(tabId, params).catch((err) => {
@@ -210,16 +296,21 @@ function registerDebuggerListeners() {
       method === "Network.webSocketCreated"
     ) {
       WebSocketInterceptor.handleEvent(tabId, method, params, emit);
+    } else if (
+      method === "Network.requestWillBeSent" ||
+      method === "Network.responseReceived" ||
+      method === "Network.loadingFinished" ||
+      method === "Network.loadingFailed"
+    ) {
+      NetworkBodyCapture.handleNetworkEvent(tabId, method, params, bodyCaptureContext);
     }
   });
 
   chrome.debugger.onDetach.addListener((source, reason) => {
     if (source.tabId == null) return;
-    attachedTabs.delete(source.tabId);
-    tabStats.delete(source.tabId);
-    RequestInterceptor.clearTab(source.tabId);
-    ResponseInterceptor.clearTab(source.tabId);
-    WebSocketInterceptor.clearTab(source.tabId);
+    // The user dismissed Chrome's debugging banner: respect it for this tab.
+    if (reason === "canceled_by_user") optedOutTabs.add(source.tabId);
+    clearTabState(source.tabId);
     emit({ type: "detached", tabId: source.tabId, reason });
   });
 }
@@ -235,11 +326,8 @@ if (typeof chrome !== "undefined") {
   });
 
   chrome.tabs.onRemoved.addListener((tabId) => {
-    attachedTabs.delete(tabId);
-    tabStats.delete(tabId);
-    RequestInterceptor.clearTab(tabId);
-    ResponseInterceptor.clearTab(tabId);
-    WebSocketInterceptor.clearTab(tabId);
+    clearTabState(tabId);
+    optedOutTabs.delete(tabId);
   });
 }
 

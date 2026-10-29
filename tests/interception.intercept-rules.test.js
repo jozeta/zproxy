@@ -60,6 +60,11 @@ test("multiple enabled rules use OR semantics — matching any one is enough", (
 });
 
 test("a disabled rule is never consulted even if it would otherwise match", () => {
-  const rules = [rule({ enabled: false, field: "url", operator: "contains", value: "admin" })];
-  assert.equal(shouldPauseForRules({ url: "https://x.com/admin" }, rules), false);
+  // Needs an enabled sibling — a lone disabled rule falls back to "pause
+  // everything" (see the all-disabled test above), which would mask this.
+  const rules = [
+    rule({ enabled: false, field: "url", operator: "contains", value: "admin" }),
+    rule({ field: "method", operator: "equals", value: "DELETE" }),
+  ];
+  assert.equal(shouldPauseForRules({ method: "GET", url: "https://x.com/admin" }, rules), false);
 });

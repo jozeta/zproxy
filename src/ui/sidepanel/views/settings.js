@@ -1,4 +1,7 @@
 import { infoIcon } from "../../components/tooltip.js";
+import { applyTheme } from "../../components/theme.js";
+import { HIDEABLE_VIEWS } from "../../../utils/nav-visibility.js";
+import { scopeIsDefined } from "../../../background/findings-monitor.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -11,6 +14,8 @@ export function renderSettings(container, ctx) {
   container.textContent = "";
   container.appendChild(el("h2", "zp-view-title", "Settings"));
   container.appendChild(el("p", "zp-hint", "Everything here is stored locally (chrome.storage) — nothing leaves the machine. See docs/SECURITY.md."));
+  // Read from the manifest — the single source of truth for the version (see CHANGELOG.md).
+  container.appendChild(el("p", "zp-mono-small", `ZProxy version ${chrome.runtime.getManifest().version}`));
 
   const form = el("div");
   container.appendChild(form);
@@ -71,12 +76,13 @@ export function renderSettings(container, ctx) {
     select.value = settings[key];
     select.addEventListener("change", async () => {
       settings = await ctx.api("settings:update", { patch: { [key]: select.value } });
+      if (key === "theme") applyTheme(settings.theme);
     });
     row.appendChild(select);
     form.appendChild(row);
   }
 
-  function checkboxSetRow(key, options, hint) {
+  function checkboxSetRow(key, options, hint, hintLabel = "About skipped resource types") {
     const current = new Set(settings[key] || []);
     options.forEach((opt, idx) => {
       const row = el("div", "zp-checkbox-row");
@@ -84,19 +90,24 @@ export function renderSettings(container, ctx) {
       input.type = "checkbox";
       const id = `settings-${key}-${opt.value}`;
       input.id = id;
-      input.checked = current.has(opt.value);
+      input.checked = current.has(opt.value) && !opt.lockedReason;
+      // A locked option can't be changed right now; its reason is shown next to it.
+      input.disabled = !!opt.lockedReason;
       input.addEventListener("change", async () => {
         const next = new Set(settings[key] || []);
         if (input.checked) next.add(opt.value);
         else next.delete(opt.value);
         settings = await ctx.api("settings:update", { patch: { [key]: [...next] } });
+        // app.js redraws the navigation on this — no need to wait for its 5s settings poll.
+        if (key === "hiddenViews") window.dispatchEvent(new CustomEvent("zproxy:settings-changed", { detail: settings }));
       });
       const lbl = document.createElement("label");
       lbl.htmlFor = id;
       lbl.textContent = opt.label;
       row.appendChild(input);
       row.appendChild(lbl);
-      if (hint && idx === 0) row.appendChild(infoIcon(hint, { label: "About skipped resource types" }));
+      if (opt.lockedReason) row.appendChild(el("span", "zp-mono-small", opt.lockedReason));
+      if (hint && idx === 0) row.appendChild(infoIcon(hint, { label: hintLabel }));
       form.appendChild(row);
     });
   }
@@ -116,6 +127,32 @@ export function renderSettings(container, ctx) {
 
   async function renderForm() {
     form.textContent = "";
+
+    form.appendChild(el("div", "zp-subheading", "Appearance"));
+    selectRow(
+      "Theme",
+      "theme",
+      [
+        { value: "dark", label: "Polar Night (dark)" },
+        { value: "light", label: "Snow Storm (light)" },
+        { value: "system", label: "Match system" },
+      ],
+      "Applies immediately. \"Match system\" follows your operating system's light/dark setting and switches with it."
+    );
+
+    // Findings runs (and stays in the nav) whenever Scope has an Include pattern.
+    const scopeDefined = scopeIsDefined(await ctx.api("scope:get"));
+    form.appendChild(el("div", "zp-subheading", "Hide from navigation"));
+    checkboxSetRow(
+      "hiddenViews",
+      HIDEABLE_VIEWS.map((v) => ({
+        value: v.id,
+        label: v.label,
+        lockedReason: v.id === "findings" && scopeDefined ? "— always shown while a Scope is defined" : null,
+      })),
+      "Checked views are left out of the side navigation to keep it focused — nothing is disabled. A hidden view still opens when another view sends you there (e.g. History → Send to Decoder), and the Scope badge in the header always opens Scope. Applies immediately.",
+      "About hiding views"
+    );
 
     form.appendChild(el("div", "zp-subheading", "History"));
     numberRow("Max history entries", "maxHistoryEntries", "Oldest entries are dropped once this cap is hit (ring buffer).");
@@ -138,6 +175,11 @@ export function renderSettings(container, ctx) {
       "Which stage(s) actually pause at all. A stage left out here never pauses — cheaper than pausing and immediately forwarding it — and content-engine Match/Replace rules scoped to that stage won't run either, since there's nothing paused for them to act on. Applies immediately to any tab Intercept is already attached to, no need to reattach. Also changeable from the Intercept view."
     );
     checkboxRow("Pause intercepted traffic by default", "manualPauseEnabled", "Can also be toggled from the Intercept view. When off, Match/Replace rules still run, but nothing is held for manual review.");
+    checkboxRow(
+      "Capture response bodies without Intercept",
+      "captureBodiesWithoutIntercept",
+      "While a Scope is defined, ZProxy attaches Chrome's debugger in observe-only mode to every tab showing an in-scope page, so History and Findings get response bodies (secrets, SQL errors, reflected input, …) without Intercept — nothing is paused or changed. Chrome shows its \"ZProxy started debugging this browser\" banner while this is active; clicking Cancel on it stops observing that tab until it closes. Turn this off to only capture bodies while Intercept is attached."
+    );
     numberRow("Auto-forward timeout (ms)", "autoForwardTimeoutMs", "Reserved for a future auto-forward-if-untouched safety net.");
 
     form.appendChild(el("div", "zp-subheading", "Skip intercepting these resource types"));
@@ -191,11 +233,21 @@ export function renderSettings(container, ctx) {
       await ctx.api("rules:save", { rules: [] });
       await ctx.api("scope:save", { scope: { enabled: false, include: [], exclude: [] } });
     });
+    const resetSettingsBtn = el("button", "zp-btn zp-btn-small zp-btn-danger", "Reset settings to defaults");
+    resetSettingsBtn.type = "button";
+    resetSettingsBtn.addEventListener("click", async () => {
+      if (!window.confirm("Reset every setting on this page (including keyboard shortcuts) to its default? Rules, Scope, and History are not affected.")) return;
+      const defaults = await ctx.api("settings:reset");
+      applyTheme(defaults.theme);
+      window.dispatchEvent(new CustomEvent("zproxy:settings-changed", { detail: defaults }));
+      await refresh();
+    });
     dataRow.appendChild(clearHistoryBtn);
     dataRow.appendChild(clearCookiesBtn);
     dataRow.appendChild(clearRulesBtn);
+    dataRow.appendChild(resetSettingsBtn);
     dataRow.appendChild(
-      infoIcon("Destructive, local-only actions: they delete captured/configured data from this browser but never touch the sites you're testing (aside from removing their cookies, if you use Clear all cookies).", { label: "About these actions" })
+      infoIcon("Destructive, local-only actions: they delete captured/configured data from this browser but never touch the sites you're testing (aside from removing their cookies, if you use Clear all cookies). Reset settings only restores this page's options — Rules, Scope, and History are left alone.", { label: "About these actions" })
     );
     form.appendChild(dataRow);
   }

@@ -14,11 +14,15 @@ test("checkResponse returns [] for a missing response or one with no headers", (
 test("a clean https/HTML response with every recommended header raises nothing", () => {
   const response = {
     headers: [
-      { name: "Content-Type", value: "text/html" },
-      { name: "Content-Security-Policy", value: "default-src 'self'" },
+      // The OWASP Secure Headers project's recommended set.
+      { name: "Content-Type", value: "text/html; charset=utf-8" },
+      { name: "Content-Security-Policy", value: "default-src 'self'; object-src 'none'; base-uri 'self'" },
       { name: "X-Content-Type-Options", value: "nosniff" },
       { name: "X-Frame-Options", value: "DENY" },
-      { name: "Strict-Transport-Security", value: "max-age=31536000" },
+      { name: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+      { name: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      { name: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+      { name: "Cross-Origin-Opener-Policy", value: "same-origin" },
     ],
   };
   assert.deepEqual(checkResponse({ url: "https://example.com/" }, response), []);
@@ -63,7 +67,13 @@ test("a cookie over https missing Secure/HttpOnly/SameSite is flagged for each, 
 });
 
 test("a fully-flagged cookie is not raised when all three attributes are present", () => {
-  const response = { headers: [{ name: "Set-Cookie", value: "id=abc123; Secure; HttpOnly; SameSite=Strict" }] };
+  // HSTS is checked on every https response, so include it to isolate the cookie checks.
+  const response = {
+    headers: [
+      { name: "Set-Cookie", value: "id=abc123; Secure; HttpOnly; SameSite=Strict" },
+      { name: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
+    ],
+  };
   const findings = checkResponse({ url: "https://example.com/" }, response);
   assert.deepEqual(findings, []);
 });

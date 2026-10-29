@@ -54,11 +54,47 @@ test("decodeHex accepts whitespace-separated hex and rejects malformed input", (
   assert.equal(decodeHex("abc").ok, false); // odd length
 });
 
-test("DECODER_MODES exposes matching encode/decode pairs for every mode", () => {
+test("DECODER_MODES exposes matching encode/decode pairs for every mode (either side may be async)", async () => {
   for (const mode of DECODER_MODES) {
-    const encoded = mode.encode("round trip me");
-    const result = mode.decode(encoded);
+    const encoded = await mode.encode("round trip me");
+    const result = await mode.decode(encoded);
     assert.equal(result.ok, true);
     assert.equal(result.value, "round trip me");
   }
+});
+
+test("new decoder modes encode and decode their own formats", async () => {
+  const { encodeUrlAll, encodeBase64Url, decodeBase64Url, encodeUnicodeEscape, decodeUnicodeEscape, encodeBinary, decodeCharCodes, rot13, decodeGzip } = await import("../src/parsers/decoder.js");
+  assert.equal(encodeUrlAll("a b"), "%61%20%62");
+  assert.equal(encodeBase64Url("??>"), "Pz8-");
+  assert.equal(decodeBase64Url("Pz8-").value, "??>");
+  assert.equal(encodeUnicodeEscape("é<"), "\\u00e9<");
+  assert.equal(decodeUnicodeEscape("\\u00e9\\x41\\u{1F600}").value, "éA😀");
+  assert.equal(encodeBinary("A"), "01000001");
+  assert.equal(decodeCharCodes("72, 105").value, "Hi");
+  assert.equal(decodeCharCodes("1,x").ok, false);
+  assert.equal(rot13(rot13("Hello")), "Hello");
+  assert.equal((await decodeGzip("not base64!")).ok, false);
+  // zlib (deflate) data is accepted too, not just gzip.
+  const zlib = await import("node:zlib");
+  assert.equal((await decodeGzip(zlib.deflateSync("hej").toString("base64"))).value, "hej");
+});
+
+test("smartDecode peels layered encodings and stops on plain text", async () => {
+  const { smartDecode } = await import("../src/parsers/decoder.js");
+  const layered = encodeURIComponent(Buffer.from('{"user":"admin","role":"staff"}').toString("base64"));
+  const steps = smartDecode(layered);
+  assert.deepEqual(steps.map((s) => s.label), ["URL", "Base64"]);
+  assert.equal(steps.at(-1).value, '{"user":"admin","role":"staff"}');
+  assert.deepEqual(smartDecode("just some words"), []);
+  assert.deepEqual(smartDecode("&lt;b&gt;").map((s) => s.value), ["<b>"]);
+});
+
+test("describeTimestamp recognizes Unix seconds, milliseconds, and ISO dates — and nothing else", async () => {
+  const { describeTimestamp } = await import("../src/parsers/decoder.js");
+  assert.equal(describeTimestamp("1706659200").iso, "2024-01-31T00:00:00.000Z");
+  assert.equal(describeTimestamp("1706659200000").unixSeconds, 1706659200);
+  assert.equal(describeTimestamp("2024-01-31T00:00:00Z").unixSeconds, 1706659200);
+  assert.equal(describeTimestamp("12345"), null);
+  assert.equal(describeTimestamp("hello"), null);
 });

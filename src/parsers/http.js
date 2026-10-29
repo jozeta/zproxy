@@ -19,9 +19,9 @@ export function hostAndPath(url) {
   }
 }
 
-/** Marks a History entry's response as {bodyAvailable: false} before handing it to the shared inspector — chrome.webRequest (History's data source) never exposes response bytes, only the debugger-backed interceptors can, so the inspector should say that explicitly instead of silently showing an empty body. See docs/CAPABILITIES.md row 9. A no-op for an entry with no response at all. */
+/** Marks a History entry's response as {bodyAvailable: false} before handing it to the shared inspector — chrome.webRequest (History's data source) never exposes response bytes, so unless Intercept's debugger captured the body (background/body-tracker.js), the inspector should say that explicitly instead of silently showing an empty body. See docs/CAPABILITIES.md row 9. A no-op for an entry with no response, or whose body was captured. */
 export function withBodyUnavailable(entry) {
-  if (!entry.response) return entry;
+  if (!entry.response || typeof entry.response.body === "string") return entry;
   return { ...entry, response: { ...entry.response, bodyAvailable: false } };
 }
 

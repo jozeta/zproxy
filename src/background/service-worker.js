@@ -7,10 +7,14 @@ import * as RequestInterceptor from "../interception/request-interceptor.js";
 import * as ResponseInterceptor from "../interception/response-interceptor.js";
 import * as WebSocketInterceptor from "../interception/websocket-interceptor.js";
 import * as Permissions from "./permissions.js";
-import { getSettings, updateSettings } from "../storage/settings.js";
+import { getSettings, updateSettings, resetSettings } from "../storage/settings.js";
 import { getRules, saveRules, getScope, saveScope, getInterceptRules, saveInterceptRules } from "../storage/rules.js";
-import { getHistory, clearHistory, loadHistory, updateHistoryEntry } from "../storage/history.js";
+import { getHistory, clearHistory, loadHistory, updateHistoryEntry, applyHistoryPersistence } from "../storage/history.js";
 import { addHostToScope } from "./scope.js";
+import { onBodyPatched } from "./body-tracker.js";
+import { createFindingsMonitor, scopeIsDefined } from "./findings-monitor.js";
+import { startPassiveObserver } from "./passive-observer.js";
+import { hiddenViewsAfterScopeChange } from "../utils/nav-visibility.js";
 
 registerTrafficListeners();
 loadHistory();
@@ -26,8 +30,46 @@ function broadcast(event) {
   });
 }
 
-onTrafficEntry((entry) => broadcast({ type: "history:new-entry", entry }));
+// Findings run in the background whenever a Scope is defined — see findings-monitor.js.
+const findingsMonitor = createFindingsMonitor({
+  getHistory,
+  getScope,
+  onChange: (summary) => broadcast({ type: "findings:summary-changed", summary }),
+});
+findingsMonitor.schedule(0);
+
+// Response bodies for History/Findings without Intercept — see passive-observer.js.
+const passiveObserver = startPassiveObserver({
+  Interception,
+  getScope,
+  getSettings,
+  hasHostAccess: () => Permissions.hasHostAccess(),
+});
+
+onTrafficEntry((entry) => {
+  broadcast({ type: "history:new-entry", entry });
+  findingsMonitor.schedule();
+});
+onBodyPatched((entry) => {
+  broadcast({ type: "history:entry-updated", entry });
+  findingsMonitor.schedule();
+});
 Interception.onInterceptionEvent((event) => broadcast({ type: "intercept:event", event }));
+
+/**
+ * The first time a Scope gets defined, un-hide the Scope view if it was
+ * hidden from the navigation — whoever just set Scope (via the Scope view,
+ * the Intercept toggle, or "Add current site") needs to be able to find
+ * and review it. Only on that transition, so hiding Scope again afterwards
+ * sticks.
+ */
+async function revealScopeIfNewlyDefined(previous, next) {
+  const settings = await getSettings();
+  const hiddenViews = hiddenViewsAfterScopeChange(settings.hiddenViews, scopeIsDefined(previous), scopeIsDefined(next));
+  if (!hiddenViews) return;
+  const updated = await updateSettings({ hiddenViews });
+  broadcast({ type: "settings:changed", settings: updated });
+}
 
 const handlers = {
   "settings:get": () => getSettings(),
@@ -36,11 +78,36 @@ const handlers = {
     if ("interceptStage" in patch || "excludedResourceTypes" in patch) {
       await Interception.refreshFetchPatternsForAttachedTabs();
     }
+    if ("persistHistoryToDisk" in patch) await applyHistoryPersistence(next);
+    if ("captureBodiesWithoutIntercept" in patch) await passiveObserver.reevaluateAll();
+    return next;
+  },
+  // Same side effects as settings:update, for whichever settings the reset actually changed.
+  "settings:reset": async () => {
+    const { previous, next } = await resetSettings();
+    if (
+      previous.interceptStage !== next.interceptStage ||
+      JSON.stringify(previous.excludedResourceTypes) !== JSON.stringify(next.excludedResourceTypes)
+    ) {
+      await Interception.refreshFetchPatternsForAttachedTabs();
+    }
+    if (previous.persistHistoryToDisk !== next.persistHistoryToDisk) await applyHistoryPersistence(next);
+    if (previous.captureBodiesWithoutIntercept !== next.captureBodiesWithoutIntercept) await passiveObserver.reevaluateAll();
     return next;
   },
 
   "scope:get": () => getScope(),
-  "scope:save": ({ scope }) => saveScope(scope),
+  // Static (DNR) rules are gated on Scope — see dnr-rules.js — so they must
+  // be recompiled whenever it changes.
+  "scope:save": async ({ scope }) => {
+    const previous = await getScope();
+    await saveScope(scope);
+    await revealScopeIfNewlyDefined(previous, scope);
+    await syncDnrRules();
+    findingsMonitor.schedule(0);
+    passiveObserver.reevaluateAll().catch(() => {});
+    return scope;
+  },
 
   "rules:get": () => getRules(),
   "rules:save": async ({ rules }) => {
@@ -53,7 +120,11 @@ const handlers = {
   "interceptRules:save": ({ interceptRules }) => saveInterceptRules(interceptRules),
 
   "history:get": () => getHistory(),
-  "history:clear": () => clearHistory(),
+  "history:clear": async () => {
+    await clearHistory();
+    findingsMonitor.schedule(0);
+  },
+  "findings:summary": () => findingsMonitor.summary(),
   // Tag/comment triage metadata only — see history.js's tag-dot click
   // handler and saveComment(). Not a general-purpose entry editor: nothing
   // else in the UI patches a History entry after capture.
@@ -63,7 +134,11 @@ const handlers = {
   "permissions:requestHostAccess": () => Permissions.requestHostAccess(),
   "permissions:hasDebugger": () => Permissions.hasDebuggerPermission(),
 
-  "intercept:status": ({ tabId }) => ({ attached: Interception.isAttached(tabId), stats: Interception.getStats(tabId) }),
+  "intercept:status": ({ tabId }) => ({
+    attached: Interception.isAttached(tabId),
+    observing: Interception.isObserved(tabId),
+    stats: Interception.getStats(tabId),
+  }),
   // {id, title, url} per attached tab, not just ids — the Intercept view's
   // "Managing tab" picker needs something human-readable to list. A tab
   // that's been attached but then closed (chrome.tabs.get throws) still
@@ -90,7 +165,11 @@ const handlers = {
     // caller (side panel/popup) since only they know which tab was clicked.
     if (host) {
       const current = await getScope();
-      await saveScope(addHostToScope(current, host));
+      const next = addHostToScope(current, host);
+      await saveScope(next);
+      await revealScopeIfNewlyDefined(current, next);
+      await syncDnrRules();
+      findingsMonitor.schedule(0);
     }
     return Interception.attachTab(tabId);
   },
@@ -100,7 +179,7 @@ const handlers = {
     responses: ResponseInterceptor.getPendingItems(tabId),
   }),
   "intercept:forward": ({ tabId, kind, fetchRequestId }) =>
-    (kind === "response" ? ResponseInterceptor.forwardUnmodified : RequestInterceptor.forward)(tabId, fetchRequestId).then(
+    (kind === "response" ? ResponseInterceptor.forward : RequestInterceptor.forward)(tabId, fetchRequestId).then(
       () => ({ ok: true })
     ),
   "intercept:forwardEdited": ({ tabId, kind, fetchRequestId, edited }) =>
