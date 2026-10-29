@@ -45,9 +45,10 @@ ZProxy as a tool).
   effortful to enable broad interception (Scope defaults to "nothing in
   scope", `<all_urls>` is an optional host permission granted per use —
   `debugger` is a required install-time permission, since Chrome does not
-  allow it to be optional, but it grants no capability on its own until a
-  tab is explicitly attached — and the intercept banner from Chrome itself
-  is always visible) rather than quietly intercepting everything by default.
+  allow it to be optional; it is only used on tabs explicitly attached via
+  Intercept, or observe-only on in-scope tabs while a Scope is defined
+  (a Settings switch turns that off) — and Chrome's own debugging banner
+  is always visible while it is in use) rather than quietly intercepting everything by default.
 - **C2 — Accidental interception of unrelated browsing** (e.g. the tester's
   banking session) while Intercept is left on. *Mitigation:* Scope UI is
   designed so "everything" is never the silent default (see `README.md`'s

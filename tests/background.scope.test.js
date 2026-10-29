@@ -144,3 +144,56 @@ test("addHostToScope still adds the plain host when only a path-restricted patte
   const scope = { enabled: true, include: ["example.com/api/"], exclude: [] };
   assert.deepEqual(addHostToScope(scope, "example.com").include, ["example.com/api/", "example.com"]);
 });
+
+test("domainScopePattern widens to the registrable domain, never to a public suffix", async () => {
+  const { domainScopePattern } = await import("../src/background/scope.js");
+  assert.equal(domainScopePattern("example.com"), "*.example.com");
+  assert.equal(domainScopePattern("app.shop.Example.com."), "*.example.com");
+  assert.equal(domainScopePattern("shop.example.co.uk"), "*.example.co.uk");
+  assert.equal(domainScopePattern("example.co.uk"), "*.example.co.uk");
+  assert.equal(domainScopePattern("co.uk"), "co.uk"); // bare suffix: exact host only, never *.co.uk
+  assert.equal(domainScopePattern("localhost"), "localhost");
+  assert.equal(domainScopePattern("192.168.1.10"), "192.168.1.10");
+  assert.equal(domainScopePattern("[::1]"), "[::1]");
+  assert.equal(domainScopePattern(""), null);
+});
+
+test("the pattern from domainScopePattern covers the domain itself and every subdomain", async () => {
+  const { domainScopePattern } = await import("../src/background/scope.js");
+  const scope = { enabled: true, include: [domainScopePattern("www.shop.example.com")], exclude: [] };
+  for (const url of ["https://example.com/", "https://www.shop.example.com/x", "https://api.example.com/"]) assert.equal(isInScope(url, scope), true, url);
+  assert.equal(isInScope("https://example.org/", scope), false);
+  assert.equal(isInScope("https://notexample.com/", scope), false);
+});
+
+test("addPatternToScope enables Scope, de-duplicates, and leaves Exclude alone", async () => {
+  const { addPatternToScope } = await import("../src/background/scope.js");
+  const next = addPatternToScope({ enabled: false, include: ["*.Example.com"], exclude: ["example.com/logout"] }, "*.example.com");
+  assert.deepEqual(next, { enabled: true, include: ["*.Example.com"], exclude: ["example.com/logout"] });
+  assert.deepEqual(addPatternToScope(undefined, "*.a.test").include, ["*.a.test"]);
+});
+
+test("cookieMatchesScope: host-only cookies need their exact host in Scope", async () => {
+  const { cookieMatchesScope } = await import("../src/background/scope.js");
+  const scope = { enabled: false, include: ["app.example.com"], exclude: [] };
+  assert.equal(cookieMatchesScope({ domain: "app.example.com", path: "/", hostOnly: true }, scope), true);
+  assert.equal(cookieMatchesScope({ domain: "www.example.com", path: "/", hostOnly: true }, scope), false);
+  assert.equal(cookieMatchesScope({ domain: "app.example.com", path: "/", hostOnly: true }, { ...scope, exclude: ["app.example.com"] }), false);
+});
+
+test("cookieMatchesScope: domain cookies count when they'd be sent to an in-scope host", async () => {
+  const { cookieMatchesScope } = await import("../src/background/scope.js");
+  const parent = { domain: ".example.com", path: "/", hostOnly: false };
+  assert.equal(cookieMatchesScope(parent, { include: ["app.example.com"] }), true); // sent to app.example.com
+  assert.equal(cookieMatchesScope(parent, { include: ["*.example.com"] }), true);
+  assert.equal(cookieMatchesScope({ domain: ".shop.example.com", path: "/", hostOnly: false }, { include: ["*.example.com"] }), true);
+  assert.equal(cookieMatchesScope(parent, { include: ["example.org"] }), false);
+  assert.equal(cookieMatchesScope({ domain: ".notexample.com", path: "/", hostOnly: false }, { include: ["*.example.com"] }), false);
+  assert.equal(cookieMatchesScope({ domain: ".app.example.com", path: "/", hostOnly: false }, { include: ["example.com"] }), false); // exact host only
+});
+
+test("cookieMatchesScope: no Include patterns means nothing matches", async () => {
+  const { cookieMatchesScope } = await import("../src/background/scope.js");
+  assert.equal(cookieMatchesScope({ domain: ".example.com", path: "/" }, { include: [] }), false);
+  assert.equal(cookieMatchesScope({ domain: ".example.com", path: "/" }, null), false);
+});

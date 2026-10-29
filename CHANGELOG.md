@@ -6,6 +6,63 @@ there at runtime. `package.json`, the README's version line, and the newest
 entry below must match it; `tests/version.test.js` fails if they drift, so
 a release bumps all four together.
 
+## 0.4.0 — 2026-10-30
+
+### Added
+- **Findings, much broader** — researched against OWASP ZAP's passive scan
+  rules, Burp's passive issue types and BApp Store extensions, the OWASP
+  Secure Headers project, Retire.js, and Gitleaks:
+  - **Vulnerable JavaScript libraries** (jQuery, jQuery UI, AngularJS,
+    Bootstrap, Lodash, Underscore, Moment, Handlebars, DOMPurify, Vue, React,
+    axios, CKEditor, TinyMCE and more), detected from license banners and
+    CDN URLs and matched against Retire.js version ranges with CVEs.
+  - **Detailed error messages**: Werkzeug/Django/Laravel/Symfony/Rails debug
+    pages, ASP.NET yellow screens, Xdebug, SQL/NoSQL/LDAP/template-engine/XML
+    errors, stack traces for Java, .NET, Python, PHP, Node, Ruby, Go and Perl,
+    default Tomcat/JBoss/Spring error pages, and full path disclosure.
+  - **Information leakage**: phpinfo(), server-status, Spring Actuator,
+    exposed .git and .env, backup and log files, GraphQL introspection, API
+    specs, internal IPs and hostnames, server banners in error pages, ~40
+    disclosure headers (OWASP list), X-Powered-By, generator meta tags,
+    framework session cookie names, emails, card numbers (Luhn-checked),
+    password hashes, serialized Java/PHP objects.
+  - **Cookies**: parent-domain scoping, broken __Host-/__Secure- prefixes,
+    invalid SameSite, duplicate cookies, passwords and readable role data in
+    cookies, session cookies without __Host-.
+  - **Headers**: legacy X-XSS-Protection, deprecated headers (HPKP,
+    Expect-CT, Feature-Policy), invalid X-Frame-Options/nosniff, missing
+    Permissions-Policy and COOP, HSTS without includeSubDomains, CSP hosts
+    with known bypasses, missing object-src/base-uri, debug/profiler headers,
+    source maps, shared-cache hits on authenticated responses, logout without
+    Clear-Site-Data, HTTP auth challenges over HTTP, TRACE and WebDAV methods.
+  - **Pages and scripts**: POST forms without CSRF tokens, password forms
+    over HTTP, third-party scripts without SRI, known-compromised script
+    domains (polyfill.io), DOM-XSS source/sink pairs, postMessage listeners
+    without origin checks, rel=opener, unencrypted JSF ViewState,
+    cryptominers, endpoints referenced in JavaScript, reflected parameters,
+    and parameter names worth testing (Hunt-style).
+  - **Tokens and secrets**: JWTs without expiry, with sensitive claims, or
+    with remote key headers; secrets in Referer and session IDs in URL paths;
+    16 more secret formats (GitLab, OpenAI, Anthropic, Slack and Discord
+    webhooks, Azure, DigitalOcean, Shopify, Vault, …).
+- **Findings always active while a Scope is defined**: a live count on the
+  Findings nav item and on ZProxy's toolbar icon (high + medium), and
+  Findings can't be hidden from the navigation.
+- **Response bodies without Intercept**: while a Scope is defined, the
+  debugger attaches in observe-only mode to in-scope tabs (Settings →
+  "Capture response bodies without Intercept"; Chrome shows its debugging
+  banner while active).
+- **Findings severity chips are independent toggles.**
+- **Intruder**: ten more payload types — Custom iterator, Regex generator,
+  Encoding variants, Illegal Unicode, Character frobber, Bit flipper, ECB
+  block shuffler, IP ranges, Random strings, UUIDs.
+- **Scope → Add current site**: adds the active tab's domain with all
+  subdomains (country domains like .co.uk handled).
+- **Cookies → In scope** filter.
+
+### Changed
+- Defining a Scope for the first time un-hides the Scope view.
+
 ## 0.3.0 — 2026-10-29
 
 ### Added

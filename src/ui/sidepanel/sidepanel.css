@@ -705,3 +705,7 @@ button.zp-header-row.selected { border-color: color-mix(in srgb, var(--accent) 6
 /* The Scope badge opens the Scope view. */
 .zp-scope-badge[role="button"] { cursor: pointer; }
 .zp-scope-badge[role="button"]:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* Findings nav badge: orange for medium, red once anything is high. */
+.zp-nav-item .zp-nav-count-findings { background: var(--aurora-orange); }
+.zp-nav-item .zp-nav-count-findings.high { background: var(--aurora-red); }

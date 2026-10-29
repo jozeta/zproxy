@@ -5,6 +5,7 @@
 // config and refreshes the payload count.
 import { WORDLISTS, WORDLIST_IDS } from "../../intruder/wordlists.js";
 import { DATE_FORMATS, DEFAULT_SUBSTITUTIONS, generatePayloads } from "../../intruder/payloads.js";
+import { parseRegexTemplate } from "../../intruder/payloads-advanced.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -115,10 +116,110 @@ export function renderExtraPayloadFields(cfg, host, update, getConfig) {
       row(host, "How many", input("number", String(cfg.count), (v) => changed({ count: Number(v) })));
       host.appendChild(el("p", "zp-hint", "Sends the base request unchanged this many times (each position gets an empty string) — for rate-limit, lockout, and race testing."));
       break;
+    case "customIterator": {
+      const slotsHost = el("div");
+      host.appendChild(slotsHost);
+      const renderSlots = () => {
+        slotsHost.textContent = "";
+        const slots = getConfig().slots;
+        slots.forEach((slot, idx) => {
+          slotsHost.appendChild(el("div", "zp-intruder-field-label", `Position ${idx + 1}`));
+          const area = document.createElement("textarea");
+          area.style.minHeight = "60px";
+          area.placeholder = "One item per line";
+          area.value = slot.text || "";
+          area.addEventListener("input", () => changed({ slots: getConfig().slots.map((s, i) => (i === idx ? { ...s, text: area.value } : s)) }));
+          slotsHost.appendChild(area);
+          if (idx < slots.length - 1) {
+            row(slotsHost, "Separator after", input("text", slot.separator, (v) => changed({ slots: getConfig().slots.map((s, i) => (i === idx ? { ...s, separator: v } : s)) })));
+          }
+        });
+        const buttons = el("div", "zp-toolbar");
+        const add = el("button", "zp-btn zp-btn-small", "+ Position");
+        add.type = "button";
+        add.disabled = slots.length >= 8;
+        add.addEventListener("click", () => {
+          changed({ slots: [...getConfig().slots, { text: "", separator: "" }] });
+          renderSlots();
+        });
+        const remove = el("button", "zp-btn zp-btn-small", "− Position");
+        remove.type = "button";
+        remove.disabled = slots.length <= 1;
+        remove.addEventListener("click", () => {
+          changed({ slots: getConfig().slots.slice(0, -1) });
+          renderSlots();
+        });
+        buttons.append(add, remove);
+        slotsHost.appendChild(buttons);
+      };
+      renderSlots();
+      host.appendChild(el("p", "zp-hint", 'Every combination of one item per position, joined by the separators — e.g. usernames, "@", domains. Up to 8 positions (Burp\'s Custom iterator).'));
+      break;
+    }
+    case "regexGenerator": {
+      const status = el("p", "zp-hint", "");
+      const validate = (v) => {
+        try {
+          parseRegexTemplate(v);
+          status.textContent = "Generates every string matching the pattern. Supports literals, [classes], . \\d \\w \\s, (a|b) groups, and ? * + {n} {n,m} — * and + repeat up to the limit below.";
+          status.style.color = "";
+        } catch (err) {
+          status.textContent = `⚠ ${err.message}`;
+          status.style.color = "var(--danger)";
+        }
+      };
+      row(host, "Pattern", input("text", cfg.pattern, (v) => {
+        changed({ pattern: v });
+        validate(v);
+      })).placeholder = "e.g. ORD-[0-9]{4}  or  (admin|root)[0-9]?";
+      row(host, "Max * / + repeats", input("number", String(cfg.maxRepeat ?? 3), (v) => changed({ maxRepeat: Number(v) })));
+      host.appendChild(status);
+      validate(cfg.pattern || "");
+      break;
+    }
+    case "encodingVariants":
+      wordsArea(host, cfg, changed, "One payload per line — each is emitted raw, URL, double-URL, URL-all, HTML entities (named, hex, decimal), \\u, \\x, and Base64 encoded");
+      host.appendChild(el("p", "zp-hint", "For finding which encoding slips past a WAF or input filter: send the same attack string in every form and compare the responses."));
+      break;
+    case "illegalUnicode":
+      wordsArea(host, cfg, changed, "One payload per line, e.g. ../ or <script>");
+      row(host, "Characters to encode", input("text", cfg.targets, (v) => changed({ targets: v }))).placeholder = "empty = every non-alphanumeric character";
+      host.appendChild(el("p", "zp-hint", "Rewrites the chosen characters as overlong UTF-8 (%C0%AF for /), %u-encoding, double percent-encoding, and full-width Unicode — forms a lenient decoder turns back into the original but a filter may not recognize."));
+      break;
+    case "characterFrobber":
+      wordsArea(host, cfg, changed, "A token or value per line, e.g. a session ID");
+      host.appendChild(el("p", "zp-hint", "Changes one character at a time (its code + 1). Compare responses to see which parts of a token the server actually checks — e.g. a session ID where only the first 8 characters matter."));
+      break;
+    case "bitFlipper":
+      wordsArea(host, cfg, changed, "A value per line — text, or hex bytes with Format = hex");
+      row(host, "Format", select([["text", "Text"], ["hex", "Hex bytes"]], cfg.format, (v) => changed({ format: v })));
+      host.appendChild(el("p", "zp-hint", "Flips each bit of each byte, one at a time — for probing how encrypted or MAC'd tokens react to tampering (e.g. CBC bit-flipping)."));
+      break;
+    case "ecbShuffler":
+      wordsArea(host, cfg, changed, "ECB ciphertext per line (base64 or hex), e.g. an encrypted cookie");
+      row(host, "Format", select([["base64", "Base64"], ["hex", "Hex"]], cfg.format, (v) => changed({ format: v })));
+      row(host, "Block size (bytes)", select([["8", "8 (DES/3DES)"], ["16", "16 (AES)"]], String(cfg.blockSize), (v) => changed({ blockSize: Number(v) })));
+      host.appendChild(el("p", "zp-hint", "ECB encrypts each block on its own, so blocks can be swapped and still decrypt. Each payload replaces one block with another — useful when a cookie like role=user|admin is ECB-encrypted."));
+      break;
+    case "ipRange":
+      wordsArea(host, cfg, changed, "One per line: 10.0.0.0/24, 192.168.1.1-192.168.1.50, or a single IP");
+      host.appendChild(el("p", "zp-hint", "For SSRF targets and IP-based access control (e.g. X-Forwarded-For). IPv4 only."));
+      break;
+    case "randomStrings":
+      row(host, "How many", input("number", String(cfg.count), (v) => changed({ count: Number(v) })));
+      row(host, "Length", input("number", String(cfg.length), (v) => changed({ length: Number(v) })));
+      row(host, "Characters", select([["hex", "Hex"], ["alphanumeric", "Letters + digits"], ["digits", "Digits"], ["lowercase", "Lowercase"], ["custom", "Custom…"]], cfg.charset, (v) => changed({ charset: v })));
+      row(host, "Custom characters", input("text", cfg.custom, (v) => changed({ custom: v })));
+      host.appendChild(el("p", "zp-hint", "Fresh random values on every run (cryptographically random) — for cache busting, unique-value constraints, and fuzzing ID formats."));
+      break;
+    case "uuids":
+      row(host, "How many", input("number", String(cfg.count), (v) => changed({ count: Number(v) })));
+      host.appendChild(el("p", "zp-hint", "Random version-4 UUIDs, new each run — e.g. to check an endpoint returns 404 (not 403 or data) for objects that don't exist."));
+      break;
     default:
       return false;
   }
-  if (cfg.type !== "nullPayloads" && cfg.type !== "charBlocks") {
+  if (!["nullPayloads", "charBlocks", "randomStrings", "uuids"].includes(cfg.type)) {
     host.appendChild(el("div", "zp-intruder-field-label", "Sample"));
     refreshSample = samplePreview(host, getConfig);
   }

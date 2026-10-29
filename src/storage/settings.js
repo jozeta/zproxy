@@ -10,6 +10,9 @@ export const SETTINGS_DEFAULTS = Object.freeze({
   // Side-panel views left out of the navigation (see src/utils/nav-visibility.js).
   // The specialist tools start hidden so the nav opens on the core workflow.
   hiddenViews: ["websockets", "access-control", "decoder", "comparer", "match-replace", "scope"],
+  // Attach the debugger in observe-only mode to in-scope tabs so History and
+  // Findings get response bodies without Intercept (background/passive-observer.js).
+  captureBodiesWithoutIntercept: true,
   autoForwardTimeoutMs: 30000,
   maxBodyBytesStored: 200000,
   theme: "dark",

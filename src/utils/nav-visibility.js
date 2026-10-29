@@ -22,3 +22,14 @@ export function visibleViews(views, hiddenIds = [], activeId = null) {
   const hidden = new Set((hiddenIds || []).filter((id) => HIDEABLE_IDS.has(id)));
   return views.filter((v) => !hidden.has(v.id) || v.id === activeId);
 }
+
+/**
+ * The hidden-views list after a Scope change: Scope is removed from it on
+ * the change that first defines a scope (wasDefined false → isDefined true),
+ * so the user can find what they just set up. Returns null when nothing
+ * should change — including every later change, so re-hiding Scope sticks.
+ */
+export function hiddenViewsAfterScopeChange(hiddenIds, wasDefined, isDefined) {
+  if (wasDefined || !isDefined || !(hiddenIds || []).includes("scope")) return null;
+  return hiddenIds.filter((id) => id !== "scope");
+}

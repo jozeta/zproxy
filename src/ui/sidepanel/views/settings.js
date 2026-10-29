@@ -1,6 +1,7 @@
 import { infoIcon } from "../../components/tooltip.js";
 import { applyTheme } from "../../components/theme.js";
 import { HIDEABLE_VIEWS } from "../../../utils/nav-visibility.js";
+import { scopeIsDefined } from "../../../background/findings-monitor.js";
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -89,7 +90,9 @@ export function renderSettings(container, ctx) {
       input.type = "checkbox";
       const id = `settings-${key}-${opt.value}`;
       input.id = id;
-      input.checked = current.has(opt.value);
+      input.checked = current.has(opt.value) && !opt.lockedReason;
+      // A locked option can't be changed right now; its reason is shown next to it.
+      input.disabled = !!opt.lockedReason;
       input.addEventListener("change", async () => {
         const next = new Set(settings[key] || []);
         if (input.checked) next.add(opt.value);
@@ -103,6 +106,7 @@ export function renderSettings(container, ctx) {
       lbl.textContent = opt.label;
       row.appendChild(input);
       row.appendChild(lbl);
+      if (opt.lockedReason) row.appendChild(el("span", "zp-mono-small", opt.lockedReason));
       if (hint && idx === 0) row.appendChild(infoIcon(hint, { label: hintLabel }));
       form.appendChild(row);
     });
@@ -136,10 +140,16 @@ export function renderSettings(container, ctx) {
       "Applies immediately. \"Match system\" follows your operating system's light/dark setting and switches with it."
     );
 
+    // Findings runs (and stays in the nav) whenever Scope has an Include pattern.
+    const scopeDefined = scopeIsDefined(await ctx.api("scope:get"));
     form.appendChild(el("div", "zp-subheading", "Hide from navigation"));
     checkboxSetRow(
       "hiddenViews",
-      HIDEABLE_VIEWS.map((v) => ({ value: v.id, label: v.label })),
+      HIDEABLE_VIEWS.map((v) => ({
+        value: v.id,
+        label: v.label,
+        lockedReason: v.id === "findings" && scopeDefined ? "— always shown while a Scope is defined" : null,
+      })),
       "Checked views are left out of the side navigation to keep it focused — nothing is disabled. A hidden view still opens when another view sends you there (e.g. History → Send to Decoder), and the Scope badge in the header always opens Scope. Applies immediately.",
       "About hiding views"
     );
@@ -165,6 +175,11 @@ export function renderSettings(container, ctx) {
       "Which stage(s) actually pause at all. A stage left out here never pauses — cheaper than pausing and immediately forwarding it — and content-engine Match/Replace rules scoped to that stage won't run either, since there's nothing paused for them to act on. Applies immediately to any tab Intercept is already attached to, no need to reattach. Also changeable from the Intercept view."
     );
     checkboxRow("Pause intercepted traffic by default", "manualPauseEnabled", "Can also be toggled from the Intercept view. When off, Match/Replace rules still run, but nothing is held for manual review.");
+    checkboxRow(
+      "Capture response bodies without Intercept",
+      "captureBodiesWithoutIntercept",
+      "While a Scope is defined, ZProxy attaches Chrome's debugger in observe-only mode to every tab showing an in-scope page, so History and Findings get response bodies (secrets, SQL errors, reflected input, …) without Intercept — nothing is paused or changed. Chrome shows its \"ZProxy started debugging this browser\" banner while this is active; clicking Cancel on it stops observing that tab until it closes. Turn this off to only capture bodies while Intercept is attached."
+    );
     numberRow("Auto-forward timeout (ms)", "autoForwardTimeoutMs", "Reserved for a future auto-forward-if-untouched safety net.");
 
     form.appendChild(el("div", "zp-subheading", "Skip intercepting these resource types"));

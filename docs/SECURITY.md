@@ -13,8 +13,12 @@
    first-use, not baked into install. `debugger` is the one exception: Chrome
    refuses to let it be declared optional at all ("Permission 'debugger'
    cannot be listed as optional"), so it's a required install-time
-   permission — but it grants no capability by itself until a tab is
-   explicitly attached via Intercept.
+   permission. It is used only for tabs explicitly attached via Intercept,
+   or — while a Scope is defined and "Capture response bodies without
+   Intercept" is on — in observe-only mode (Network domain only, never
+   Fetch, so nothing is paused or modified) on tabs showing in-scope pages.
+   Chrome's debugging banner is shown in both cases, and dismissing it
+   stops observation of that tab until it closes.
 3. **Captured content is untrusted input, always.** A response body captured
    from a target application may contain attacker-controlled or malicious
    HTML/JS (that's often the point of testing it). ZProxy's own UI must never

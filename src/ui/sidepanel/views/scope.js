@@ -1,4 +1,5 @@
 import { infoIcon } from "../../components/tooltip.js";
+import { domainScopePattern, addPatternToScope } from "../../../background/scope.js";
 
 // Scope gates every passive capture and every debugger interception —
 // fail-closed by design (src/background/scope.js): disabled or empty means
@@ -119,11 +120,69 @@ export function renderScope(container, ctx) {
   );
   container.appendChild(enabledRow);
 
+  // "Add current site": the active tab's registrable domain as a wildcard
+  // (domainScopePattern), so one click covers the site and all subdomains.
+  // The button label always shows the exact pattern before it's added.
+  const siteRow = el("div", "zp-pending-actions");
+  const addSiteBtn = el("button", "zp-btn zp-btn-primary zp-btn-small", "Add current site");
+  addSiteBtn.type = "button";
+  addSiteBtn.disabled = true;
+  const siteStatus = el("span", "zp-mono-small", "");
+  siteRow.appendChild(addSiteBtn);
+  siteRow.appendChild(
+    infoIcon(
+      "Adds the active tab's domain with every subdomain — e.g. on app.shop.example.com it adds *.example.com, which matches example.com, shop.example.com, api.example.com, and so on — and switches Scope on. Country domains are handled (shop.example.co.uk → *.example.co.uk), and IP addresses or localhost are added exactly. Only add sites you're authorized to test.",
+      { label: "About Add current site" }
+    )
+  );
+  siteRow.appendChild(siteStatus);
+  container.appendChild(siteRow);
+  let sitePattern = null;
+
+  async function refreshSiteButton() {
+    const tab = await ctx.api("tabs:current").catch(() => null);
+    let url = null;
+    try {
+      url = tab?.url ? new URL(tab.url) : null;
+    } catch {
+      /* unparseable — treated like a non-web page below */
+    }
+    sitePattern = url && ["http:", "https:"].includes(url.protocol) ? domainScopePattern(url.hostname) : null;
+    addSiteBtn.disabled = !sitePattern;
+    addSiteBtn.textContent = sitePattern ? `Add current site (${sitePattern})` : "Add current site";
+    addSiteBtn.title = sitePattern ? "" : "The active tab isn't a website (http/https) — switch to the site you want to test.";
+    if (sitePattern && scope.include.some((p) => p.trim().toLowerCase() === sitePattern)) {
+      addSiteBtn.disabled = true;
+      siteStatus.textContent = "Already in Scope.";
+    } else {
+      siteStatus.textContent = "";
+    }
+  }
+
+  addSiteBtn.addEventListener("click", async () => {
+    if (!sitePattern) return;
+    if (!(await ctx.api("permissions:hasHostAccess"))) {
+      const granted = await ctx.api("permissions:requestHostAccess");
+      if (!granted) {
+        siteStatus.textContent = "Host access is needed before ZProxy can see this site.";
+        return;
+      }
+    }
+    scope = addPatternToScope(scope, sitePattern);
+    await save();
+    enabledCheck.checked = scope.enabled;
+    hostNotice.hidden = await ctx.api("permissions:hasHostAccess");
+    renderLists();
+    await refreshSiteButton();
+    siteStatus.textContent = `Added ${sitePattern} — the site and all its subdomains are now in Scope.`;
+  });
+
   const listsHost = el("div");
   container.appendChild(listsHost);
 
   async function save() {
     await ctx.api("scope:save", { scope });
+    refreshSiteButton();
   }
 
   function renderLists() {
@@ -151,6 +210,7 @@ export function renderScope(container, ctx) {
     enabledCheck.checked = scope.enabled;
     hostNotice.hidden = await ctx.api("permissions:hasHostAccess");
     renderLists();
+    await refreshSiteButton();
   }
   refresh();
 }

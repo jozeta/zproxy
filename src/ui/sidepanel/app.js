@@ -169,8 +169,11 @@ function renderNav() {
   nav.textContent = "";
   nav.appendChild(navIndicator);
   interceptNavBtn = null;
+  findingsNavBtn = null;
   let activeBtn = null;
-  for (const view of visibleViews(VIEWS, hiddenViews || [], activeView)) {
+  // Findings is always listed while a Scope is defined, whatever the hide setting says.
+  const hidden = (hiddenViews || []).filter((id) => !(id === "findings" && findingsSummary.active));
+  for (const view of visibleViews(VIEWS, hidden, activeView)) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "zp-nav-item" + (view.id === activeView ? " active" : "");
@@ -186,10 +189,41 @@ function renderNav() {
     btn.addEventListener("click", () => navigateTo(view.id));
     nav.appendChild(btn);
     if (view.id === "intercept") interceptNavBtn = btn;
+    if (view.id === "findings") findingsNavBtn = btn;
     if (view.id === activeView) activeBtn = btn;
   }
   positionNavIndicator(activeBtn);
   updateInterceptNavBadge();
+  updateFindingsNavBadge();
+}
+
+// Findings run in the background whenever a Scope is defined
+// (background/findings-monitor.js); this mirrors its summary in the nav.
+let findingsNavBtn = null;
+let findingsSummary = { high: 0, medium: 0, low: 0, info: 0, active: false };
+
+function updateFindingsNavBadge() {
+  if (!findingsNavBtn) return;
+  findingsNavBtn.querySelector(".zp-nav-count")?.remove();
+  const urgent = findingsSummary.high + findingsSummary.medium;
+  findingsNavBtn.title = findingsSummary.active
+    ? `Findings — ${findingsSummary.high} high, ${findingsSummary.medium} medium, ${findingsSummary.low} low, ${findingsSummary.info} info`
+    : "Findings";
+  if (findingsSummary.active && urgent > 0) {
+    const count = document.createElement("span");
+    count.className = `zp-nav-count zp-nav-count-findings${findingsSummary.high ? " high" : ""}`;
+    count.textContent = String(urgent > 99 ? "99+" : urgent);
+    findingsNavBtn.appendChild(count);
+  }
+}
+
+function applyFindingsSummary(summary) {
+  if (!summary) return;
+  const visibilityChanged = summary.active !== findingsSummary.active;
+  findingsSummary = summary;
+  // hiddenViews is null until settings load — the nav hasn't been drawn yet, so don't draw it early.
+  if (visibilityChanged && hiddenViews !== null) renderNav();
+  else updateFindingsNavBadge();
 }
 
 function positionNavIndicator(btn) {
@@ -312,6 +346,12 @@ interceptToggle.addEventListener("click", async () => {
 });
 
 onPush((event) => {
+  if (event.type === "findings:summary-changed") applyFindingsSummary(event.summary);
+  // e.g. Scope un-hidden automatically when a scope is first defined (service-worker.js).
+  if (event.type === "settings:changed") applyNavSettings(event.settings);
+});
+
+onPush((event) => {
   if (event.type !== "intercept:event" || event.event.tabId !== currentTab?.id) return;
   if (event.event.type === "attached" || event.event.type === "detached") {
     refreshInterceptState();
@@ -337,6 +377,7 @@ async function init() {
       currentTab.url = changeInfo.url;
     }
   });
+  applyFindingsSummary(await call("findings:summary").catch(() => null));
   // Settings first, so the nav's first render already respects hidden views.
   await refreshShortcuts();
   if (hiddenViews === null) renderNav(); // settings unavailable — show everything rather than nothing

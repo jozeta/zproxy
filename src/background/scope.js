@@ -129,3 +129,81 @@ export function addHostToScope(scopeConfig, host) {
     exclude: base.exclude ? [...base.exclude] : [],
   };
 }
+
+// Two-label public suffixes ("co.uk") under which the registrable domain
+// needs three labels. Not the full Public Suffix List — ZProxy bundles no
+// data files — just the common ones, so "shop.example.co.uk" becomes
+// "*.example.co.uk" and never "*.co.uk" (which would put every site in the
+// country in scope). A suffix missing from this table makes the pattern one
+// label too broad for that country, so the Scope view always shows the
+// exact pattern on the button before anything is added.
+const MULTI_PART_SUFFIXES = new Set([
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "net.uk", "sch.uk", "nhs.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "net.nz", "govt.nz",
+  "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "co.kr", "or.kr", "com.cn", "net.cn", "org.cn", "gov.cn", "com.hk", "com.tw", "com.sg", "com.my",
+  "co.in", "net.in", "org.in", "gov.in", "co.za", "org.za", "gov.za", "com.br", "net.br", "org.br", "gov.br", "com.ar", "com.mx", "gob.mx",
+  "com.tr", "gov.tr", "com.ua", "co.il", "org.il", "gov.il", "com.sa", "com.eg", "com.ng", "co.ke", "co.id", "or.id", "go.id", "com.ph", "com.vn", "co.th", "in.th",
+]);
+
+/**
+ * The Scope pattern for "this site including its subdomains", from a page's
+ * hostname: the registrable domain as a wildcard — app.shop.example.com →
+ * "*.example.com" (which also matches example.com itself). IP addresses,
+ * single-label hosts (localhost), and anything that would reduce to a bare
+ * public suffix get the exact hostname instead. Returns null for an empty
+ * or non-host value.
+ */
+export function domainScopePattern(hostname) {
+  const host = (hostname || "").trim().toLowerCase().replace(/\.$/, "");
+  if (!host || /[\s/:]/.test(host.replace(/^\[.*\]$/, "x"))) return null;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[")) return host; // IPv4/IPv6 literal
+  const labels = host.split(".");
+  if (labels.length === 1) return host; // localhost, intranet names
+  const lastTwo = labels.slice(-2).join(".");
+  if (MULTI_PART_SUFFIXES.has(lastTwo)) {
+    return labels.length >= 3 ? `*.${labels.slice(-3).join(".")}` : host;
+  }
+  return `*.${lastTwo}`;
+}
+
+/**
+ * Adds `pattern` to Include and switches Scope on — a no-op for Include if
+ * an identical pattern is already there. Like addHostToScope(), never
+ * touches Exclude.
+ */
+export function addPatternToScope(scopeConfig, pattern) {
+  const base = scopeConfig || DEFAULT_SCOPE;
+  const include = base.include ? [...base.include] : [];
+  const exists = include.some((p) => p.trim().toLowerCase() === pattern.toLowerCase());
+  return {
+    enabled: true,
+    include: exists ? include : [...include, pattern],
+    exclude: base.exclude ? [...base.exclude] : [],
+  };
+}
+
+/**
+ * Would `cookie` (a chrome.cookies.Cookie: {domain, path, hostOnly, secure})
+ * be sent to some in-scope URL? Host-only cookies go to exactly one host, so
+ * that host must be in Scope (Exclude and path patterns applied). A domain
+ * cookie (".example.com") goes to the domain and every subdomain, so it
+ * counts when any Include pattern's host overlaps it — the same domain, a
+ * host under it (Scope "app.example.com" still receives ".example.com"
+ * cookies), or a wildcard above it. Ignores the "Scope enabled" switch: this
+ * answers "is it relevant to my target", for filtering the Cookies view.
+ */
+export function cookieMatchesScope(cookie, scopeConfig) {
+  const include = (scopeConfig?.include || []).filter((p) => (p || "").trim());
+  if (include.length === 0 || !cookie?.domain) return false;
+  const domain = cookie.domain.toLowerCase().replace(/^\./, "");
+  const scheme = cookie.secure ? "https" : "http";
+  if (cookie.hostOnly || !cookie.domain.startsWith(".")) {
+    return isInScope(`${scheme}://${domain}${cookie.path || "/"}`, { ...scopeConfig, enabled: true });
+  }
+  return include.some((pattern) => {
+    const host = parseScopePattern(pattern).host;
+    const base = host.startsWith("*.") ? host.slice(2) : host;
+    if (base.includes("*")) return hostMatchesPattern(domain, host); // mid-pattern wildcard: best effort
+    return base === domain || base.endsWith(`.${domain}`) || (host.startsWith("*.") && domain.endsWith(`.${base}`));
+  });
+}

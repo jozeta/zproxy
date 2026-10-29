@@ -21,6 +21,20 @@ function clip(text, max = 80) {
 
 // ---------------------------------------------------------------- headers --
 
+// Response headers that only reveal the stack, versions, or internal topology
+// — from the OWASP Secure Headers project's headers_remove.json (read
+// 2026-10-29), minus pure tracing IDs. Server and X-Powered-By are handled
+// by the version-banner check in passive-checks.js.
+const DISCLOSURE_HEADERS = [
+  "x-aspnet-version", "x-aspnetmvc-version", "x-generator", "x-generated-by", "x-runtime-version", "x-php-version",
+  "x-powered-by-plesk", "x-powered-cms", "x-server-powered-by", "x-cf-powered-by", "powered-by", "x-cms", "x-framework",
+  "x-joomla-version", "x-umbraco-version", "x-owa-version", "x-cocoon-version", "liferay-portal", "oraclecommercecloud-version",
+  "x-backend-server", "x-beserver", "x-feserver", "x-calculatedbetarget", "x-diaginfo", "x-varnish-backend", "x-varnish-server",
+  "x-envoy-upstream-service-time", "x-envoy-original-dst-host", "x-kong-upstream-latency", "x-kong-proxy-latency",
+  "x-nextjs-cache", "x-nextjs-matched-path", "x-redirect-by", "x-turbo-charged-by", "x-mod-pagespeed", "x-page-speed",
+  "x-litespeed-cache", "x-gitlab-meta", "teamcity-node-id", "x-jitsi-release", "x-woodpecker-version",
+];
+
 /** CSP directives as a Map(name -> source list), lower-cased. */
 export function parseCsp(csp) {
   const directives = new Map();
@@ -84,9 +98,14 @@ function checkHeaders(request, response, { isHttps, html }) {
     }
   }
 
-  const disclosure = ["x-aspnet-version", "x-aspnetmvc-version", "x-generator", "x-runtime-version"].map((n) => [n, h(n)]).filter(([, v]) => v);
+  const disclosure = DISCLOSURE_HEADERS.map((n) => [n, h(n)]).filter(([, v]) => v);
   if (disclosure.length) {
-    out.push(finding("tech-disclosure-header", "info", "Headers disclose the technology stack", `${disclosure.map(([n, v]) => `${n}: ${clip(v, 40)}`).join(", ")} — fingerprinting help for an attacker; usually safe to remove.`));
+    const versioned = disclosure.some(([, v]) => /\d+\.\d+/.test(v));
+    out.push(finding("tech-disclosure-header", versioned ? "low" : "info", "Headers disclose the technology stack or internals", `${disclosure.map(([n, v]) => `${n}: ${clip(v, 40)}`).join(", ")} — fingerprinting help for an attacker${versioned ? " (with version numbers, which map straight to known CVEs)" : ""}; usually safe to remove.`));
+  }
+  const sourceFiles = h("x-sourcefiles");
+  if (sourceFiles) {
+    out.push(finding("aspnet-sourcefiles-header", "low", "X-SourceFiles header exposes a server path", `ASP.NET debug builds send X-SourceFiles with the base64-encoded physical path of the source file (${clip(sourceFiles, 40)}) — it means the app is running a debug build.`));
   }
 
   if (html && !h("referrer-policy")) {
@@ -188,16 +207,61 @@ function checkJwts(request, response) {
 
 // ------------------------------------------------------------------- body --
 
+// Detailed error messages: framework debug pages, stack traces, database
+// and template-engine errors, and leaked filesystem paths. Each finding id
+// is "error-disclosure-<label>"; `why` says what the leak gives an attacker.
+const STACK_TRACE_WHY = "Stack traces reveal file paths, framework and library versions, and code structure — and show that errors aren't being caught before they reach users.";
 const ERROR_SIGNATURES = [
-  { severity: "medium", label: "SQL error", pattern: /You have an error in your SQL syntax|SQLSTATE\[|ORA-\d{5}|PG::[A-Za-z]+Error|Unclosed quotation mark after the character string|sqlite3?\.OperationalError|Microsoft OLE DB Provider for SQL Server/i },
-  { severity: "low", label: "Java stack trace", pattern: /\bat [\w$.]+\([\w$]+\.java:\d+\)/ },
-  { severity: "low", label: ".NET exception", pattern: /\bSystem\.[\w.]+Exception\b.*?(\n|\r|<br)|Server Error in '\/.*' Application/ },
-  { severity: "low", label: "Python traceback", pattern: /Traceback \(most recent call last\)/ },
-  { severity: "low", label: "PHP error", pattern: /(Fatal error|Warning|Parse error|Notice): .{1,200} in \/[^\s<]+\.php on line \d+/ },
-  { severity: "low", label: "Node.js stack trace", pattern: /\bat [\w.<>$ ]+ \(\/[^\s)]+\.js:\d+:\d+\)/ },
+  // Debug pages that are dangerous in themselves.
+  { severity: "high", label: "Werkzeug debugger", pattern: /Werkzeug Debugger|The debugger caught an exception in your WSGI application|[?&]__debugger__=yes/, why: "The Werkzeug interactive debugger is enabled. Its console executes arbitrary Python on the server (its PIN can often be derived from leaked system details) — remote code execution." },
+  { severity: "high", label: "Django debug page", pattern: /You're seeing this error because you have <code>DEBUG = True<\/code>|DEBUG = True<\/code> in your Django settings/, why: "Django is running with DEBUG = True: the error page dumps settings, environment details, SQL queries, and the URL routing table." },
+  { severity: "high", label: "Laravel debug page", pattern: /Illuminate\\[A-Za-z\\]+Exception|whoops-container|Whoops, looks like something went wrong|facade\/ignition|spatie\/laravel-ignition|laravel\/framework\/src\/Illuminate/, why: "Laravel debug mode (APP_DEBUG) is on: the Ignition/Whoops page exposes environment variables and source. Old Ignition versions allow remote code execution (CVE-2021-3129)." },
+  { severity: "medium", label: "Symfony debug page", pattern: /Symfony\\Component\\[A-Za-z\\]+Exception|class="sf-toolbar|Symfony Exception<\/h1>|sf-dump/, why: "Symfony is in debug mode: the exception page and profiler toolbar expose source, configuration, and request data." },
+  { severity: "medium", label: "Rails debug page", pattern: /Action Controller: Exception caught|<h1>Routing Error<\/h1>[\s\S]{0,400}Rails\.root|ActiveRecord::(StatementInvalid|RecordNotFound)/, why: "Rails is showing its development error page: routes, source snippets, and request parameters are exposed." },
+  { severity: "medium", label: "ASP.NET detailed error", pattern: /Server Error in '\/.*' Application|ASP\.NET is configured to show verbose error messages|<b>\s*Exception Details:\s*<\/b>|<b>\s*Stack Trace:\s*<\/b>/, why: "ASP.NET customErrors is off: the 'yellow screen of death' shows the exception, a stack trace, source lines, and framework versions." },
+  { severity: "medium", label: "Xdebug output", pattern: /class=['"]xdebug-error|<th[^>]*>Call Stack<\/th>[\s\S]{0,300}Memory/, why: "The Xdebug extension is loaded in production — it renders full call stacks and variables in error output, and its remote debugger can be abused for code execution." },
+  { severity: "medium", label: "ColdFusion error", pattern: /ColdFusion (Error|cannot determine)|coldfusion\.runtime\.|The error occurred in [A-Z]:\\.*\.cfm/i, why: "ColdFusion's robust exception information is enabled: templates, paths, and SQL are exposed." },
+  { severity: "medium", label: "GraphQL stack trace", pattern: /"extensions"\s*:\s*\{[^}]{0,200}"(exception|stacktrace)"/, why: "GraphQL errors include server stack traces (debug mode) — internals and file paths are exposed to every client." },
+  // Data-layer errors: often a sign that input reaches a query unescaped.
+  {
+    severity: "medium",
+    label: "SQL error",
+    pattern: /You have an error in your SQL syntax|SQLSTATE\[|ORA-\d{5}|PG::[A-Za-z]+Error|PSQLException|syntax error at or near "|Unclosed quotation mark after the character string|Incorrect syntax near '|System\.Data\.SqlClient\.SqlException|sqlite3?\.OperationalError|SQLITE_ERROR|Microsoft OLE DB Provider for SQL Server|\[ODBC [^\]]*Driver\]|mysqli?_(fetch|query|num_rows)\(|MySqlException|com\.mysql\.jdbc|org\.postgresql\.util|DB2 SQL error|org\.hibernate\.(QueryException|exception)/i,
+    why: "Database error text often means request input reaches a query without parameterization — probe the parameter for SQL injection. It also reveals the database engine and query structure.",
+  },
+  { severity: "medium", label: "NoSQL error", pattern: /MongoError|MongoServerError|E11000 duplicate key error|CastError: Cast to ObjectId failed|couchdb.*"error"\s*:\s*"query_parse_error"/i, why: "Database errors from MongoDB/CouchDB suggest input reaches a query — probe for NoSQL injection (e.g. {\"$ne\": null})." },
+  { severity: "medium", label: "Template engine error", pattern: /jinja2\.exceptions|TemplateSyntaxError|Twig(_Error|\\Error)|freemarker\.(core|template)\.|org\.apache\.velocity|Smarty(Compiler)?Exception|Liquid (syntax )?error|org\.thymeleaf\.exceptions|Handlebars(\.js)? error/i, why: "A template engine error usually means input reached a template — a strong hint of server-side template injection (try {{7*7}})." },
+  { severity: "medium", label: "LDAP error", pattern: /javax\.naming\.(directory|NameNotFoundException|InvalidNameException)|LDAPException|ldap_(search|bind)\(\)|Invalid DN syntax/i, why: "LDAP errors suggest input reaches a directory query — probe for LDAP injection." },
+  { severity: "low", label: "XML parser error", pattern: /SAXParseException|XML Parsing Error|DOMDocument::loadXML|lxml\.etree\.XMLSyntaxError|System\.Xml\.XmlException|XMLStreamException/, why: "The server parses XML from requests — check whether it resolves external entities (XXE)." },
+  { severity: "low", label: "Search engine error", pattern: /SearchPhaseExecutionException|SearchParseException|"type"\s*:\s*"(query_shard_exception|parsing_exception)"|org\.apache\.solr\.(search|common)/, why: "Elasticsearch/Solr errors reveal the search backend and query structure — input may be injectable into the query DSL." },
+  // Language-level stack traces.
+  { severity: "low", label: "Java stack trace", pattern: /\bat [\w$.]+\([\w$]+\.java:\d+\)/, why: STACK_TRACE_WHY },
+  { severity: "low", label: ".NET exception", pattern: /\bSystem\.[\w.]+Exception\b.*?(\n|\r|<br)/, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Python traceback", pattern: /Traceback \(most recent call last\)/, why: STACK_TRACE_WHY },
+  { severity: "low", label: "PHP error", pattern: /(Fatal error|Warning|Parse error|Notice|Deprecated): .{1,200} in (\/|[A-Z]:\\)[^\s<]+\.php on line \d+|PHP (Fatal|Parse) error:|Uncaught (Exception|Error|TypeError)\b.{0,200} in \//, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Node.js stack trace", pattern: /\bat [\w.<>$ ]+ \(\/[^\s)]+\.js:\d+:\d+\)/, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Ruby exception", pattern: /\.rb:\d+:in `[^']+'/, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Go panic", pattern: /goroutine \d+ \[running\]:|panic: runtime error:/, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Perl error", pattern: / at \/[^\s]+\.p[lm] line \d+\./, why: STACK_TRACE_WHY },
+  { severity: "low", label: "Spring Whitelabel error page", pattern: /Whitelabel Error Page/, why: "Spring Boot's default error page — it confirms the stack, and with server.error.include-stacktrace on, includes traces." },
+  { severity: "low", label: "Tomcat error page", pattern: /Apache Tomcat\/\d+\.\d+\.\d+ - Error report|<h3>Apache Tomcat\/\d/, why: "The default Tomcat error page reveals the exact Tomcat version — look it up for known CVEs." },
+  { severity: "low", label: "JBoss/WildFly error", pattern: /JBWEB\d{6}|JBoss Web\/\d|WFLYUT\d{4}/, why: "The application server's default error output reveals the JBoss/WildFly version." },
+  // Filesystem paths in error output.
+  {
+    severity: "low",
+    label: "Full path disclosure",
+    pattern: /(?:\/var\/www|\/home\/[a-z0-9_-]+|\/usr\/(?:local\/)?(?:lib|share|src)|\/srv\/|\/opt\/|\/app\/)[\w./-]*\.(?:php|py|rb|js|ts|java|go|cs|pl|jsp|aspx?|cfm)\b|[A-Z]:\\(?:inetpub|Users|Program Files|xampp|wamp|Windows)\\[\w\\ .-]+/,
+    why: "A server-side filesystem path is visible. Paths help an attacker aim path-traversal and file-inclusion payloads, and reveal usernames and directory layout.",
+  },
 ];
 
-const PRIVATE_IP = /\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/;
+const PRIVATE_IP = /\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3})\b/;
+// Internal-only DNS names (cloud-internal, corporate) — never meant for outside
+// visitors. ".local"/".lan" are left out: they collide with ordinary JavaScript
+// property access (this.local), and scripts are skipped below for the same reason.
+const INTERNAL_HOSTNAME = /\b(?:[a-z0-9-]+\.)+(?:internal|corp|intranet|localdomain)\b(?![.-][a-z])|\bip-\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}\.[a-z0-9.-]*(?:ec2\.internal|compute\.internal)\b/i;
+// Web/app server version strings rendered into a page (default error pages, footers).
+const IN_PAGE_BANNER = /\b(Apache|nginx|Microsoft-IIS|LiteSpeed|openresty|Jetty|lighttpd|Caddy|gunicorn|Werkzeug|Kestrel|Tomcat|PHP)\/\d+\.\d+(?:\.\d+)?(?:\s*\([^)]{1,40}\))?/;
 
 function hostOf(url) {
   try {
@@ -212,18 +276,30 @@ function checkBody(request, response, { isHttps, html }) {
   const body = typeof response.body === "string" ? response.body : "";
 
   if (body) {
+    const scanned = body.slice(0, 300_000);
     for (const sig of ERROR_SIGNATURES) {
-      if (sig.pattern.test(body)) {
-        out.push(finding(`error-disclosure-${sig.label.toLowerCase().replace(/[^a-z]+/g, "-")}`, sig.severity, `${sig.label} in response`, `The body contains what looks like a ${sig.label}. Error details reveal internals (paths, queries, versions) and an SQL error in particular often means input reaches a query unescaped — worth probing for injection.`));
+      const m = scanned.match(sig.pattern);
+      if (m) {
+        out.push(finding(`error-disclosure-${sig.label.toLowerCase().replace(/[^a-z]+/g, "-").replace(/-$/, "")}`, sig.severity, `${sig.label} in response`, `Matched "${clip(m[0].replace(/\s+/g, " "), 60)}". ${sig.why}`));
       }
     }
-    if (/<title>\s*Index of \//i.test(body)) {
+    if (/<title>\s*(Index of \/|Directory listing for \/)|\[To Parent Directory\]|<a href="\.\.\/">\.\.\/<\/a>|>Parent Directory<\/a>/i.test(scanned)) {
       out.push(finding("directory-listing", "low", "Directory listing enabled", "The server lists a directory's files, which can expose backups, configs, or source that was never linked."));
     }
     const requestHost = hostOf(request?.url || "");
-    const ip = body.match(PRIVATE_IP) || (response.headers || []).map((h) => h.value).join("\n").match(PRIVATE_IP);
+    const headerText = (response.headers || []).map((h) => h.value).join("\n");
+    const ip = scanned.match(PRIVATE_IP) || headerText.match(PRIVATE_IP);
     if (ip && !PRIVATE_IP.test(requestHost)) {
       out.push(finding("private-ip-disclosure", "info", "Internal IP address disclosed", `"${ip[0]}" appears in the response — it reveals internal network layout to an outside visitor.`));
+    }
+    const isScript = /javascript|ecmascript/i.test(getHeaderValue(response.headers || [], "content-type") || "");
+    const internalHost = (isScript ? null : scanned.match(INTERNAL_HOSTNAME)) || headerText.match(INTERNAL_HOSTNAME);
+    if (internalHost && !INTERNAL_HOSTNAME.test(requestHost)) {
+      out.push(finding("internal-hostname-disclosure", "info", "Internal hostname disclosed", `"${clip(internalHost[0], 60)}" — an internal or cloud-private DNS name, revealing infrastructure that isn't meant to be visible from outside.`));
+    }
+    const banner = scanned.match(IN_PAGE_BANNER);
+    if (banner && response.statusCode >= 400) {
+      out.push(finding("in-page-server-banner", "low", "Server version shown in an error page", `"${clip(banner[0], 60)}" — the exact server version in a default error page maps straight to known CVEs.`));
     }
   }
 

@@ -5,6 +5,7 @@
 // attack (e.g. a wide brute-force range) can't freeze the tab
 // materializing millions of strings.
 import { WORDLISTS } from "./wordlists.js";
+import * as Adv from "./payloads-advanced.js";
 
 export const DEFAULT_GENERATION_CAP = 20000;
 
@@ -20,6 +21,16 @@ export const PAYLOAD_TYPES = [
   { value: "usernames", label: "Username generator" },
   { value: "charBlocks", label: "Character blocks" },
   { value: "nullPayloads", label: "Null payloads" },
+  { value: "customIterator", label: "Custom iterator" },
+  { value: "regexGenerator", label: "Regex generator" },
+  { value: "encodingVariants", label: "Encoding variants" },
+  { value: "illegalUnicode", label: "Illegal Unicode" },
+  { value: "characterFrobber", label: "Character frobber" },
+  { value: "bitFlipper", label: "Bit flipper" },
+  { value: "ecbShuffler", label: "ECB block shuffler" },
+  { value: "ipRange", label: "IP ranges" },
+  { value: "randomStrings", label: "Random strings" },
+  { value: "uuids", label: "UUIDs" },
 ];
 
 export const DATE_FORMATS = ["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY", "YYYYMMDD", "DD-MM-YYYY", "unix", "unixMs", "iso"];
@@ -45,6 +56,25 @@ export function defaultConfig(type) {
       return { type: "charBlocks", base: "A", minLength: 100, maxLength: 1000, step: 100 };
     case "nullPayloads":
       return { type: "nullPayloads", count: 10 };
+    case "customIterator":
+      return { type: "customIterator", slots: [{ text: "", separator: "" }, { text: "", separator: "" }] };
+    case "regexGenerator":
+      return { type: "regexGenerator", pattern: "", maxRepeat: 3 };
+    case "encodingVariants":
+    case "characterFrobber":
+      return { type, text: "" };
+    case "illegalUnicode":
+      return { type: "illegalUnicode", text: "../", targets: "" };
+    case "bitFlipper":
+      return { type: "bitFlipper", text: "", format: "text" };
+    case "ecbShuffler":
+      return { type: "ecbShuffler", text: "", format: "base64", blockSize: 16 };
+    case "ipRange":
+      return { type: "ipRange", text: "127.0.0.1\n10.0.0.0/30" };
+    case "randomStrings":
+      return { type: "randomStrings", count: 20, length: 16, charset: "hex", custom: "" };
+    case "uuids":
+      return { type: "uuids", count: 20, uppercase: false };
     case "simpleList":
     default:
       return { type: "simpleList", text: "" };
@@ -286,6 +316,19 @@ export function estimateCount(config) {
       return countCharBlocks(config);
     case "nullPayloads":
       return nullCount(config);
+    case "customIterator":
+      return Adv.countCustomIterator(config);
+    case "ipRange":
+      return Adv.countIpRange(config);
+    case "randomStrings":
+    case "uuids":
+      return nullCount(config);
+    case "regexGenerator":
+    case "encodingVariants":
+    case "illegalUnicode":
+    case "characterFrobber":
+    case "bitFlipper":
+    case "ecbShuffler":
     case "caseModification":
     case "charSubstitution":
     case "usernames":
@@ -322,6 +365,26 @@ function iteratorFor(config) {
       return (function* () {
         for (let i = 0; i < nullCount(config); i++) yield "";
       })();
+    case "customIterator":
+      return Adv.customIteratorIter(config);
+    case "regexGenerator":
+      return Adv.regexGeneratorIter(config);
+    case "encodingVariants":
+      return Adv.encodingVariantsIter(config);
+    case "illegalUnicode":
+      return Adv.illegalUnicodeIter(config);
+    case "characterFrobber":
+      return Adv.characterFrobberIter(config);
+    case "bitFlipper":
+      return Adv.bitFlipperIter(config);
+    case "ecbShuffler":
+      return Adv.ecbShufflerIter(config);
+    case "ipRange":
+      return Adv.ipRangeIter(config);
+    case "randomStrings":
+      return Adv.randomStringsIter(config);
+    case "uuids":
+      return Adv.uuidIter(config);
     default:
       return [][Symbol.iterator]();
   }

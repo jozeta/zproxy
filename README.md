@@ -2,7 +2,7 @@
 
 **Inspect. Intercept. Modify.**
 
-**Version 0.3.0** · [Changelog](CHANGELOG.md)
+**Version 0.4.0** · [Changelog](CHANGELOG.md)
 
 A lightweight, browser-native Chrome (Manifest V3) extension for inspecting
 and intercepting your own browser's HTTP traffic, inspired by the day-to-day
@@ -41,7 +41,8 @@ say plainly that it doesn't and why. Two things worth knowing up front:
 1. **Intercept** — attach ZProxy to the current tab (header toggle). This
    also adds that tab's exact host to Scope automatically, so attaching
    to a tab is enough on its own — no separate setup step required.
-2. **Scope** — review/broaden this any time (add `*.example.com` wildcards,
+2. **Scope** — review/broaden this any time (**Add current site** adds the
+   active tab's domain with every subdomain in one click; add `*.example.com` wildcards,
    narrow to a path, scheme, or port with `[scheme://]host[:port][/path]`
    like `example.com/api/`, exclude a host or path you don't want touched
    like `example.com/logout`). Disabled or empty scope means
@@ -154,8 +155,12 @@ test suite (see above).
 
 `<all_urls>` is requested just-in-time with Chrome's own permission prompt —
 never silently assumed at install. `debugger` can't follow that model (Chrome
-won't allow it to), so it's declared up front instead; it grants no capability
-on its own until you actually attach Intercept to a tab.
+won't allow it to), so it's declared up front instead. It's used only while
+Intercept is attached to a tab, or — once a Scope is defined and Settings →
+"Capture response bodies without Intercept" is on (the default) — in
+observe-only mode on tabs showing in-scope pages (nothing is paused or
+changed). Either way Chrome shows its debugging banner; turn that setting
+off to keep the debugger idle until you click Intercept.
 
 ## What's implemented, and via which API
 
@@ -165,17 +170,17 @@ project started from. Summary:
 | Feature | Backing API | Debugger needed? |
 |---|---|---|
 | History (traffic log, search/filter/sort/regex-search across headers+body, row tagging/comments, HAR/JSON/cURL/Postman export) | `chrome.webRequest` | No |
-| History **response bodies** (text-like responses: HTML, JSON, JS, XML, …), so passive checks and search cover bodies too | CDP `Network.getResponseBody`, observation only — nothing is paused, whatever Intercept's stage/resource-type settings | **Yes** (only while Intercept is attached to the tab) |
-| Cookie inspector/editor (full CRUD, `Set-Cookie` parsing) | `chrome.cookies` + `webRequest` header reads | No |
+| History **response bodies** (text-like responses: HTML, JSON, JS, XML, …), so passive checks and search cover bodies too | CDP `Network.getResponseBody`, observation only — nothing is paused. Captured while Intercept is attached, **and automatically for in-scope tabs while a Scope is defined** (observe-only debugger session; Settings switch) | **Yes** (observe-only) |
+| Cookie inspector/editor (full CRUD, `Set-Cookie` parsing, **In scope** filter for cookies the browser would send to in-scope sites) | `chrome.cookies` + `webRequest` header reads | No |
 | Static header/URL rules in Match & Replace (plus 10 one-click presets, a live rule tester with regex error reporting, duplicate/reorder, enable/disable all, filter) | `declarativeNetRequest` dynamic rules | No |
 | Repeater (resend/edit a request, rename/duplicate tabs, Pretty/Raw/Headers/Preview response views with find-in-response, per-tab timeout, copy as / import from cURL, tabs kept until the browser closes, optional session-handling macro for rotating CSRF/session tokens, ◀ ▶ per-tab send history, diff against the previous response, **Send group** of N parallel copies for race-condition testing) | `fetch()` from the extension page | No |
 | `Cookie` / `Origin` / `Referer` in Repeater, Intruder, and Access Control — the forbidden headers `fetch()` can't set | A `declarativeNetRequest` session rule per send, pinned to that exact URL+method and to non-tab requests, removed right after. **Unverified in a live browser** — see the manual checklist | No |
 | Access Control (Autorize-style: replay History requests as other identities / unauthenticated, flag responses that match the original user's, diff any cell) | `fetch()` + the header override above (`src/authz/access-control.js`) | No |
-| Intruder (Burp-style automated attacks: mark §positions§, generate payloads from 10 payload types (Simple list, built-in Fuzz lists, Numbers, Dates, Brute forcer, Case modification, Character substitution, Username generator, Character blocks, Null payloads), 21 processing rules, concurrency, retries, stop on first match, CSV export, Sniper/Battering ram/Pitchfork/Cluster bomb, payload processing rules, Grep-Match, Search-Extract, session-handling macro, sortable results, response-anomaly highlighting) | `fetch()` from the extension page, same as Repeater | No |
+| Intruder (Burp-style automated attacks: mark §positions§, generate payloads from 20 payload types (Simple list, built-in Fuzz lists, Numbers, Dates, Brute forcer, Case modification, Character substitution, Username generator, Character blocks, Null payloads, Custom iterator, Regex generator, Encoding variants, Illegal Unicode, Character frobber, Bit flipper, ECB block shuffler, IP ranges, Random strings, UUIDs), 21 processing rules, concurrency, retries, stop on first match, CSV export, Sniper/Battering ram/Pitchfork/Cluster bomb, payload processing rules, Grep-Match, Search-Extract, session-handling macro, sortable results, response-anomaly highlighting) | `fetch()` from the extension page, same as Repeater | No |
 | Decoder (11 encodings: Base64, Base64url, URL, URL-all, HTML entities, Unicode escape, Hex, Binary, Char codes, ROT13, Gzip; Smart decode for layered encodings; Undo; an Inspect panel for JWTs and timestamps; MD5, SHA-1/256/384/512, CRC-32, HMAC-SHA-256) | Pure JS + Web Crypto (`src/parsers/decoder.js`, `src/utils/hash.js`) | No |
 | Comparer (word-level diff of any two request/response texts) | Pure JS (`src/parsers/diff.js`) | No |
-| Passive security findings — 35+ checks (missing security headers, cookie flags, permissive CORS, verbose server banners, secret-shaped strings in bodies, unescaped-reflected request values, weak CSP/HSTS, reflected or null CORS origins, cacheable authenticated responses, secrets in URLs, credentials over HTTP, alg-none JWTs, SQL errors and stack traces, directory listings, internal IPs, mixed content, open-redirect candidates; Markdown report export) | Pure JS, zero extra requests (`src/parsers/passive-checks.js`) — not a scanner | No |
-| Findings (every passive finding across History, grouped by kind with an occurrence count, click-through to every affected URL) | Pure JS, reuses `passive-checks.js` (`src/ui/sidepanel/views/findings.js`) | No |
+| Passive security findings — 100+ checks, researched against OWASP ZAP, Burp and its BApp Store, OWASP Secure Headers, Retire.js and Gitleaks: vulnerable JavaScript libraries with CVEs, detailed error messages (debug pages, stack traces, SQL/template/LDAP errors, path disclosure), information leakage (phpinfo, server-status, Actuator, .git/.env, internal IPs/hostnames, disclosure headers), cookie scoping/prefixes, CSP bypass hosts, CSRF-less forms, DOM-XSS patterns, JS endpoints, interesting parameters, (missing security headers, cookie flags, permissive CORS, verbose server banners, secret-shaped strings in bodies, unescaped-reflected request values, weak CSP/HSTS, reflected or null CORS origins, cacheable authenticated responses, secrets in URLs, credentials over HTTP, alg-none JWTs, SQL errors and stack traces, directory listings, internal IPs, mixed content, open-redirect candidates; Markdown report export) | Pure JS, zero extra requests (`src/parsers/passive-checks.js`) — not a scanner | No |
+| Findings (every passive finding across History, grouped by kind with an occurrence count, independent severity toggles, click-through to every affected URL; **always active while a Scope is defined**, with live counts on the nav item and the toolbar icon) | Pure JS, reuses `passive-checks.js` (`src/ui/sidepanel/views/findings.js`) | No |
 | Keyboard shortcuts (Forward, Send to Repeater, Search, Clear history, Toggle intercept) | Page-level `keydown` listener (`src/utils/shortcuts.js`) | No |
 | Intercept: pause/edit/forward/drop requests and responses, conditional "Pause only when" rules, multi-tab "Managing tab" picker | `chrome.debugger` + CDP `Fetch` | **Yes** |
 | Response body view/edit | `chrome.debugger` + CDP `Fetch.getResponseBody`/`fulfillRequest` | **Yes** |
@@ -350,6 +355,18 @@ sandboxed iframe, so verify these by hand at least once:
 - [ ] Match & Replace: add the "Reveal hidden form fields" preset (it
       arrives switched off), paste sample HTML into "Test this rule", then
       enable it with Intercept attached and confirm hidden inputs show.
+- [ ] Findings while a Scope is defined: add the test lab with Scope → **Add
+      current site**, browse it with Intercept off, and confirm Chrome's
+      debugging banner appears (observe-only capture), History rows get
+      response bodies, the Findings nav item and the toolbar icon show a
+      count, and Findings can't be hidden in Settings. Click **Cancel** on the
+      banner and confirm ZProxy doesn't re-attach to that tab.
+- [ ] Findings: switch individual severity chips off and on; Export report
+      should only include the visible severities.
+- [ ] Cookies: with a Scope defined, toggle **In scope** and confirm only
+      cookies for in-scope hosts (and their parent domains) remain.
+- [ ] Intruder: try the Regex generator with `ORD-[0-9]{2}` and check the
+      sample, then an invalid pattern like `(abc` and check the error.
 - [ ] **Forbidden-header override (verify this before trusting Access
       Control):** in Repeater, send to the test lab's `/api/echo-headers`
       with `Cookie: probe=1`, `Origin: https://evil.test`, and

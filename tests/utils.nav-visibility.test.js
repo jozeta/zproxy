@@ -27,3 +27,11 @@ test("no hidden list (or a missing one) shows everything", () => {
   assert.equal(visibleViews(VIEWS, undefined).length, VIEWS.length);
   assert.equal(visibleViews(VIEWS, []).length, VIEWS.length);
 });
+
+test("Scope is un-hidden on the change that first defines a scope — and only then", async () => {
+  const { hiddenViewsAfterScopeChange } = await import("../src/utils/nav-visibility.js");
+  assert.deepEqual(hiddenViewsAfterScopeChange(["decoder", "scope"], false, true), ["decoder"]);
+  assert.equal(hiddenViewsAfterScopeChange(["decoder", "scope"], true, true), null); // already defined: re-hiding sticks
+  assert.equal(hiddenViewsAfterScopeChange(["decoder", "scope"], false, false), null);
+  assert.equal(hiddenViewsAfterScopeChange(["decoder"], false, true), null); // already visible
+});

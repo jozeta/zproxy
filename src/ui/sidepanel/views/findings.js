@@ -80,7 +80,7 @@ export function renderFindings(container, ctx) {
     btn.dataset.severity = sev;
     toolbar.appendChild(btn);
   }
-  toolbar.appendChild(infoIcon("Click a severity chip to show only that severity; click again to clear it. Only one can be active at a time. Each chip shows how many kinds of finding have that severity.", { label: "About severity filters" }));
+  toolbar.appendChild(infoIcon("Each severity chip is an independent on/off toggle — all are on by default; switch off the ones you don't want to see (e.g. Info). Each chip shows how many kinds of finding have that severity. Your choice is kept while the panel is open.", { label: "About severity filters" }));
   const exportBtn = el("button", "zp-btn zp-btn-small", "Export report");
   exportBtn.type = "button";
   toolbar.appendChild(exportBtn);
@@ -106,7 +106,9 @@ export function renderFindings(container, ctx) {
   ];
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
-  const filters = { search: "", severity: "", sortKey: "severity", sortDir: "desc" };
+  // Severities currently shown — each chip toggles its own membership.
+  if (!ctx.sharedState.findingsSeverities) ctx.sharedState.findingsSeverities = [...SEVERITY_CHIPS];
+  const filters = { search: "", severities: new Set(ctx.sharedState.findingsSeverities), sortKey: "severity", sortDir: "desc" };
   for (const col of columns) {
     const th = el("th", "", col.label);
     th.style.cursor = "pointer";
@@ -168,7 +170,7 @@ export function renderFindings(container, ctx) {
 
   function applyFilters() {
     filtered = allGroups.filter((g) => {
-      if (filters.severity && g.severity !== filters.severity) return false;
+      if (!filters.severities.has(g.severity)) return false;
       if (!matchesSearch(g, filters.search)) return false;
       return true;
     });
@@ -182,7 +184,8 @@ export function renderFindings(container, ctx) {
       const sev = chip.dataset.severity;
       const n = allGroups.filter((g) => g.severity === sev).length;
       chip.textContent = `${sev.charAt(0).toUpperCase() + sev.slice(1)} ${n}`;
-      chip.classList.toggle("active", sev === filters.severity);
+      chip.classList.toggle("active", filters.severities.has(sev));
+      chip.setAttribute("aria-pressed", String(filters.severities.has(sev)));
     }
     renderRows();
   }
@@ -199,7 +202,12 @@ export function renderFindings(container, ctx) {
       const td = document.createElement("td");
       td.colSpan = columns.length;
       td.className = "zp-empty";
-      td.textContent = allGroups.length === 0 ? "No passive findings in History yet." : "No findings match the current filters.";
+      td.textContent =
+        allGroups.length === 0
+          ? "No passive findings in History yet."
+          : filters.severities.size === 0
+            ? "Every severity is switched off — turn one back on above."
+            : "No findings match the current filters.";
       tr.appendChild(td);
       tbody.appendChild(tr);
       return;
@@ -268,7 +276,10 @@ export function renderFindings(container, ctx) {
   });
   for (const btn of toolbar.querySelectorAll(".zp-filter-chip")) {
     btn.addEventListener("click", () => {
-      filters.severity = filters.severity === btn.dataset.severity ? "" : btn.dataset.severity;
+      const sev = btn.dataset.severity;
+      if (filters.severities.has(sev)) filters.severities.delete(sev);
+      else filters.severities.add(sev);
+      ctx.sharedState.findingsSeverities = [...filters.severities];
       applyFilters();
     });
   }
