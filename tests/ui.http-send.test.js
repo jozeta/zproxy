@@ -133,10 +133,18 @@ test("sendRequestGroup sends identical overridden requests concurrently under on
 test("sendRequest gives up after timeoutMs and says it timed out", async () => {
   fetchImpl = (_url, init) =>
     new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason)));
-  const result = await sendRequest(req([]), { timeoutMs: 20 });
-  assert.equal(result.ok, false);
-  assert.equal(result.timedOut, true);
-  assert.match(result.error, /Timed out/);
+  // AbortSignal.timeout() uses an unref'd timer, so with the fake fetch nothing keeps Node's event
+  // loop alive while we wait; Node 22's test runner then cancels the test as "still pending".
+  // A ref'd interval keeps the loop running until the timeout fires (browsers don't need this).
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const result = await sendRequest(req([]), { timeoutMs: 20 });
+    assert.equal(result.ok, false);
+    assert.equal(result.timedOut, true);
+    assert.match(result.error, /Timed out/);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("a successful response records whether redirects were followed and the final URL", async () => {
