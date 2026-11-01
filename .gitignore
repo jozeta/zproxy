@@ -26,3 +26,11 @@ Thumbs.db
 *.crx
 *.pem
 *.zip
+
+# --- Baseline: macOS, Claude Code and secrets ---
+._*
+.claude/settings.local.json
+.remember/
+*.key
+*.p12
+*.pfx
