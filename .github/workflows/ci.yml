@@ -18,4 +18,5 @@ jobs:
         with:
           node-version: 22
       - name: Unit tests (parsers, scope, match & replace, intruder, security regressions)
-        run: npm test
+        # Explicit file list: Node 22 doesn't accept a directory argument for --test.
+        run: node --test tests/*.test.js
