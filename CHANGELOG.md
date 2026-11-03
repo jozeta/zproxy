@@ -6,6 +6,8 @@ there at runtime. `package.json`, the README's version line, and the newest
 entry below must match it; `tests/version.test.js` fails if they drift, so
 a release bumps all four together.
 
+## Unreleased
+
 ## 0.4.0 — 2026-10-30
 
 ### Added
