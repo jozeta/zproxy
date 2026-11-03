@@ -1,0 +1,5 @@
+# Known fake keys for claude-audit (tools/audit-all.sh): one <commit>:<path> per reviewed finding.
+# Test cases for zproxy's passive secret checks (values built from repeated characters).
+# Reviewed 2026-11-03. Exact entries only, so any new finding is still reported.
+360b821:tests/parsers.passive-checks.test.js
+ec72804:tests/parsers.passive-checks-bapp.test.js
