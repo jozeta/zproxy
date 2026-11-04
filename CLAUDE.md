@@ -14,6 +14,7 @@ certificate or backend. Plain ES modules, no build step. Version in `manifest.js
 
 ```sh
 npm test                          # node --test tests/ (Node 18+, no npm install needed)
+npm ci && npm run lint            # ESLint (dev-only dependency), incl. the unsafe-DOM rule
 node examples/test-lab/server.js  # tiny local practice target
 ```
 
@@ -52,3 +53,8 @@ Interception needs `chrome.debugger` (CDP `Fetch`): MV3 has no blocking `webRequ
 - No telemetry and no requests the user didn't initiate. `<all_urls>` is requested
   just-in-time, never assumed. Justify any new permission in the README permissions table.
 - Put new logic in a pure module with a `node:test` test where possible.
+
+## App standards
+
+This repo follows the app standards in `~/Desktop/code/tools/standards/STANDARDS.md` (rule IDs,
+severities; decisions and waivers in `.claude-standards`). `claude-check --repo .` checks it.

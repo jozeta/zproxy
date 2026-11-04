@@ -8,7 +8,14 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/",
+    "lint": "eslint ."
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-plugin-no-unsanitized": "^4.1.5",
+    "globals": "^16.5.0"
+  }
 }

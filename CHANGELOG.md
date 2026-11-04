@@ -8,6 +8,9 @@ a release bumps all four together.
 
 ## Unreleased
 
+- ESLint (flat config with the no-unsanitized rule) as a dev-only tool; CI runs `npm run lint`
+  before the tests. Removed an unused import and a needless regex escape
+
 ## 0.4.0 — 2026-10-30
 
 ### Added

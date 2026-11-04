@@ -53,7 +53,7 @@ const SECRET_SIGNATURES = [
   { id: "discord-webhook", label: "Discord webhook", severity: "high", pattern: /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]{60,}/g },
   { id: "twilio-key", label: "Twilio API key", severity: "high", pattern: /\bSK[0-9a-f]{32}\b/g },
   { id: "mailgun-key", label: "Mailgun API key", severity: "high", pattern: /\bkey-[0-9a-f]{32}\b/g },
-  { id: "azure-storage-key", label: "Azure storage connection string", severity: "high", pattern: /AccountKey=[A-Za-z0-9+\/=]{80,}/g },
+  { id: "azure-storage-key", label: "Azure storage connection string", severity: "high", pattern: /AccountKey=[A-Za-z0-9+/=]{80,}/g },
   { id: "digitalocean-token", label: "DigitalOcean token", severity: "high", pattern: /\bdo[opr]_v1_[a-f0-9]{64}\b/g },
   { id: "telegram-bot-token", label: "Telegram bot token", severity: "high", pattern: /\b\d{8,10}:AA[0-9A-Za-z_-]{33}\b/g },
   { id: "shopify-token", label: "Shopify access token", severity: "high", pattern: /\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b/g },

@@ -28,7 +28,7 @@ import { compileSearchQuery, searchResponse } from "../../../intruder/search.js"
 import { defaultMacro, applyMacroValue, extractMacroValue } from "../../../intruder/macro.js";
 import { parseHeaderLines } from "../../../parsers/headers.js";
 import { PROCESSING_RULE_TYPES, ruleTakesValue, ruleTakesMatch, defaultProcessingRule, applyProcessingRulesToAll } from "../../../intruder/processing.js";
-import { findAnomalies, sortResults, SORTABLE_RESULT_KEYS } from "../../../intruder/analysis.js";
+import { findAnomalies, sortResults } from "../../../intruder/analysis.js";
 
 // Real requests going out to a real target — these bound how big an attack
 // can be before ZProxy makes you stop and think (or refuses outright).

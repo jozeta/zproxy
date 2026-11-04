@@ -32,7 +32,7 @@ implemented once in `src/utils/sanitize.js`. `tests/security.render.test.js`
 unit-tests the pure-string `escapeHtml` half of this against the spec's named
 XSS payloads; the iframe-sandboxing half is a DOM/browser behavior that this
 Node-only test harness can't exercise directly (no jsdom — the project takes
-no dependencies), so it's covered instead by the static source scan in
+no runtime dependencies; ESLint is a dev-only tool), so it's covered instead by the static source scan in
 `tests/security.no-eval.test.js` and should be spot-checked manually in Chrome
 before release (see README "Manual verification checklist").
 

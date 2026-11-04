@@ -78,6 +78,7 @@ export function selectCandidates(history, { includeUnsafe = false, urlContains =
  *
  * TODO(you): implement — see the request in the chat for the trade-offs.
  */
+// eslint-disable-next-line no-unused-vars -- stub until the TODO above is implemented
 export function judgeReplay(original, replay) {
   return null;
 }

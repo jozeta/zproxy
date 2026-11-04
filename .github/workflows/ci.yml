@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - run: npm ci
+      - name: Lint (ESLint, including the unsafe-DOM rule)
+        run: npm run lint
       - name: Unit tests (parsers, scope, match & replace, intruder, security regressions)
         # Explicit file list: Node 22 doesn't accept a directory argument for --test.
         run: node --test tests/*.test.js
