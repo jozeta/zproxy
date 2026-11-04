@@ -1,0 +1,1 @@
+waive=SEC-EXT-1: an HTTP interception proxy has to see any origin; <all_urls> is optional and requested at first use (README, docs/THREAT_MODEL.md)
