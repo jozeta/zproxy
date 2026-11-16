@@ -2,7 +2,7 @@
 
 **Inspect. Intercept. Modify.**
 
-**Version 0.4.0** · [Changelog](CHANGELOG.md)
+**Version 0.4.1** · [Changelog](CHANGELOG.md)
 
 A lightweight, browser-native Chrome (Manifest V3) extension for inspecting
 and intercepting your own browser's HTTP traffic, inspired by the day-to-day
@@ -112,18 +112,31 @@ calls — so text uses your platform's UI font. The panes in Intercept,
 Repeater, and Findings are resizable: drag the handle between them, or focus
 it and use the arrow keys.
 
+## What's new in 0.4.1
+
+- Development only: ESLint (flat config with the no-unsanitized rule), run by CI before the tests; an unused import and a needless regex escape were removed.
+- README: screenshots in a captioned grid and this section.
+
+Older versions: see [CHANGELOG.md](CHANGELOG.md).
+
 ## Screenshots
 
 All screenshots use made-up sample data for a fictional `shop.example`.
 
-| | |
-|---|---|
-| ![Intercept view with three paused requests and the drag handle between the queue and the inspector](docs/screenshots/intercept-dark.png) | ![Repeater with a named tab, a JSON response pretty-printed, and find-in-response](docs/screenshots/repeater-dark.png) |
-| **Intercept** — paused requests, resizable queue, Forward / Drop / Send to… | **Repeater** — named tabs, Pretty/Raw/Headers views, timeout, cURL import/export |
-| ![Findings view grouping passive findings by severity with coloured stripes, a selected finding, and its affected URLs](docs/screenshots/findings-dark.png) | ![Dashboard in the light Snow Storm theme with request, scope, rule, tab, and finding counts](docs/screenshots/dashboard-light.png) |
-| **Findings** — grouped by severity, counts per chip, Markdown report export | **Dashboard** in the light **Snow Storm** theme |
-| ![Settings in the light theme showing Appearance, Hide from navigation, History, and Interception options](docs/screenshots/settings-light.png) | ![The side panel at a narrow width: the navigation collapses to an icon rail with a pending-count badge](docs/screenshots/narrow-dark.png) |
-| **Settings** — theme, hidden views, intercept defaults, reset | **Narrow panel** — navigation collapses to an icon rail |
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/intercept-dark.png" alt="Intercept view with three paused requests and the drag handle between the queue and the inspector" width="100%"><br><sub><b>Intercept</b> — paused requests, resizable queue, Forward / Drop / Send to…</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/repeater-dark.png" alt="Repeater with a named tab, a JSON response pretty-printed, and find-in-response" width="100%"><br><sub><b>Repeater</b> — named tabs, Pretty/Raw/Headers views, timeout, cURL import/export</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/findings-dark.png" alt="Findings view grouping passive findings by severity with coloured stripes, a selected finding, and its affected URLs" width="100%"><br><sub><b>Findings</b> — grouped by severity, counts per chip, Markdown report export</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/dashboard-light.png" alt="Dashboard in the light Snow Storm theme with request, scope, rule, tab, and finding counts" width="100%"><br><sub><b>Dashboard</b> in the light <b>Snow Storm</b> theme</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/settings-light.png" alt="Settings in the light theme showing Appearance, Hide from navigation, History, and Interception options" width="100%"><br><sub><b>Settings</b> — theme, hidden views, intercept defaults, reset</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/narrow-dark.png" alt="The side panel at a narrow width: the navigation collapses to an icon rail with a pending-count badge" width="100%"><br><sub><b>Narrow panel</b> — navigation collapses to an icon rail</sub></td>
+</tr>
+</table>
 
 ## Installing (unpacked, for development/testing)
 
